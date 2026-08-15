@@ -1,24 +1,18 @@
 pipeline {
     agent any
-
     options {
         disableConcurrentBuilds()
         timestamps()
         buildDiscarder(logRotator(daysToKeepStr: '30', numToKeepStr: '50'))
         timeout(time: 25, unit: 'MINUTES')
     }
-
-    triggers {
-        pollSCM('H/30 * * * *')
-    }
-
+    triggers { pollSCM('H/30 * * * *') }
     environment {
         APP_NAME = 'personal-system-inspector'
         DEPLOY_ROOT = '/opt/personal-system-inspector'
         INTERNAL_PORT = '31880'
         IMAGE_REPOSITORY = 'personal-system-inspector'
     }
-
     stages {
         stage('Checkout') {
             steps {
@@ -27,11 +21,11 @@ pipeline {
                     env.GIT_SHORT_SHA = sh(script: 'git rev-parse --short=12 HEAD', returnStdout: true).trim()
                     env.RELEASE_ID = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
                     env.IMAGE_TAG = "${env.IMAGE_REPOSITORY}:${env.GIT_SHORT_SHA}"
+                    env.REMOTE_WORKSPACE = "/tmp/personal-inspector-jenkins-${env.BUILD_NUMBER}"
                     currentBuild.displayName = "#${env.BUILD_NUMBER} ${env.GIT_SHORT_SHA}"
                 }
             }
         }
-
         stage('Credential Check') {
             steps {
                 withCredentials([
@@ -46,42 +40,58 @@ pipeline {
                 ]) {
                     sh '''
                         set +x
-                        test -n "$C_APP_SECRET"
-                        test -n "$C_ADMIN_PASSWORD"
-                        test -n "$C_RUN_TOKEN"
-                        test -n "$C_UBUNTU_USER"
-                        test -n "$C_CENTOS_USER"
-                        test -n "$C_POSTGRES_USER"
-                        test -n "$C_MYSQL_USER"
-                        test -n "$C_JENKINS_USER"
-                        echo 'Required Jenkins credentials are available (values hidden).'
+                        for value in "$C_APP_SECRET" "$C_ADMIN_PASSWORD" "$C_RUN_TOKEN" "$C_UBUNTU_USER" "$C_UBUNTU_PASSWORD" "$C_CENTOS_USER" "$C_CENTOS_PASSWORD" "$C_POSTGRES_USER" "$C_POSTGRES_PASSWORD" "$C_MYSQL_USER" "$C_MYSQL_PASSWORD" "$C_JENKINS_USER" "$C_JENKINS_TOKEN"; do test -n "$value"; done
+                        command -v sshpass >/dev/null
+                        echo 'Required credentials and SSH transport are available (values hidden).'
                     '''
                 }
             }
         }
-
+        stage('Prepare Remote Workspace') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'personal-inspector-ubuntu-ssh', usernameVariable: 'C_UBUNTU_USER', passwordVariable: 'C_UBUNTU_PASSWORD')]) {
+                    sh '''
+                        set +x
+                        export SSHPASS="$C_UBUNTU_PASSWORD"
+                        tar --exclude=.git --exclude=.env --exclude=data --exclude=logs -czf - . | sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "target='$REMOTE_WORKSPACE'; case \"\$target\" in /tmp/personal-inspector-jenkins-*) ;; *) exit 90;; esac; rm -rf -- \"\$target\"; mkdir -p \"\$target\"; tar -xzf - -C \"\$target\""
+                    '''
+                }
+            }
+        }
         stage('Static Check') {
             steps {
-                sh '''
-                    docker build --target test -t "$APP_NAME-test:$BUILD_NUMBER" .
-                    docker run --rm "$APP_NAME-test:$BUILD_NUMBER" ruff check .
-                '''
+                withCredentials([usernamePassword(credentialsId: 'personal-inspector-ubuntu-ssh', usernameVariable: 'C_UBUNTU_USER', passwordVariable: 'C_UBUNTU_PASSWORD')]) {
+                    sh '''
+                        set +x
+                        export SSHPASS="$C_UBUNTU_PASSWORD"
+                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && docker build --target test -t '$APP_NAME-test:$BUILD_NUMBER' . && docker run --rm '$APP_NAME-test:$BUILD_NUMBER' ruff check ."
+                    '''
+                }
             }
         }
-
         stage('Pytest') {
             steps {
-                sh 'docker run --rm "$APP_NAME-test:$BUILD_NUMBER" pytest -q'
+                withCredentials([usernamePassword(credentialsId: 'personal-inspector-ubuntu-ssh', usernameVariable: 'C_UBUNTU_USER', passwordVariable: 'C_UBUNTU_PASSWORD')]) {
+                    sh '''
+                        set +x
+                        export SSHPASS="$C_UBUNTU_PASSWORD"
+                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && docker run --rm '$APP_NAME-test:$BUILD_NUMBER' pytest -q"
+                    '''
+                }
             }
         }
-
-        stage('Build Image') {
+        stage('Build Production Image') {
             steps {
-                sh 'docker build --target runtime -t "$IMAGE_TAG" .'
+                withCredentials([usernamePassword(credentialsId: 'personal-inspector-ubuntu-ssh', usernameVariable: 'C_UBUNTU_USER', passwordVariable: 'C_UBUNTU_PASSWORD')]) {
+                    sh '''
+                        set +x
+                        export SSHPASS="$C_UBUNTU_PASSWORD"
+                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && docker build --target runtime -t '$IMAGE_TAG' ."
+                    '''
+                }
             }
         }
-
-        stage('Create Versioned Release') {
+        stage('Versioned Deploy and Health Check') {
             steps {
                 withCredentials([
                     string(credentialsId: 'personal-inspector-app-secret', variable: 'C_APP_SECRET'),
@@ -94,100 +104,32 @@ pipeline {
                     usernamePassword(credentialsId: 'personal-inspector-jenkins-api', usernameVariable: 'C_JENKINS_USER', passwordVariable: 'C_JENKINS_TOKEN')
                 ]) {
                     sh '''
-                        set -eu
                         set +x
-                        umask 077
-                        RELEASE_DIR="$DEPLOY_ROOT/releases/$RELEASE_ID"
-                        SHARED_DIR="$DEPLOY_ROOT/shared"
-                        mkdir -p "$RELEASE_DIR" "$SHARED_DIR/data/reports" "$SHARED_DIR/logs" "$SHARED_DIR/config"
-                        cp docker-compose.yml "$RELEASE_DIR/"
-                        if [ ! -f "$SHARED_DIR/config/app.json" ]; then cp config/app.json "$SHARED_DIR/config/app.json"; fi
-                        if [ ! -f "$SHARED_DIR/config/checks.yaml" ]; then cp config/checks.yaml "$SHARED_DIR/config/checks.yaml"; fi
-                        touch "$SHARED_DIR/.env"
-                        grep -Ev '^(APP_SECRET_KEY|ADMIN_INITIAL_PASSWORD|RUN_API_TOKEN|APP_VERSION|INSPECTOR_IMAGE|INSPECTOR_PORT|UBUNTU_SSH_USERNAME|UBUNTU_SSH_PASSWORD|CENTOS_SSH_USERNAME|CENTOS_SSH_PASSWORD|POSTGRES_HOST|POSTGRES_PORT|POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_DB|MYSQL_HOST|MYSQL_PORT|MYSQL_USER|MYSQL_PASSWORD|MYSQL_DB|JENKINS_URL|JENKINS_USERNAME|JENKINS_API_TOKEN)=' "$SHARED_DIR/.env" > "$SHARED_DIR/.env.next" || true
+                        export SSHPASS="$C_UBUNTU_PASSWORD"
                         {
-                            printf 'APP_SECRET_KEY=%s\n' "$C_APP_SECRET"
-                            printf 'ADMIN_INITIAL_PASSWORD=%s\n' "$C_ADMIN_PASSWORD"
-                            printf 'RUN_API_TOKEN=%s\n' "$C_RUN_TOKEN"
-                            printf 'APP_VERSION=%s\n' "$GIT_SHORT_SHA"
-                            printf 'INSPECTOR_IMAGE=%s\n' "$IMAGE_TAG"
-                            printf 'INSPECTOR_PORT=%s\n' "$INTERNAL_PORT"
-                            printf 'UBUNTU_SSH_USERNAME=%s\n' "$C_UBUNTU_USER"
-                            printf 'UBUNTU_SSH_PASSWORD=%s\n' "$C_UBUNTU_PASSWORD"
-                            printf 'CENTOS_SSH_USERNAME=%s\n' "$C_CENTOS_USER"
-                            printf 'CENTOS_SSH_PASSWORD=%s\n' "$C_CENTOS_PASSWORD"
-                            printf 'POSTGRES_HOST=192.168.0.100\nPOSTGRES_PORT=15432\nPOSTGRES_USER=%s\nPOSTGRES_PASSWORD=%s\nPOSTGRES_DB=vnpy\n' "$C_POSTGRES_USER" "$C_POSTGRES_PASSWORD"
-                            printf 'MYSQL_HOST=192.168.0.110\nMYSQL_PORT=3306\nMYSQL_USER=%s\nMYSQL_PASSWORD=%s\nMYSQL_DB=mysql\n' "$C_MYSQL_USER" "$C_MYSQL_PASSWORD"
-                            printf 'JENKINS_URL=http://192.168.0.111:8080\nJENKINS_USERNAME=%s\nJENKINS_API_TOKEN=%s\n' "$C_JENKINS_USER" "$C_JENKINS_TOKEN"
-                        } >> "$SHARED_DIR/.env.next"
-                        mv "$SHARED_DIR/.env.next" "$SHARED_DIR/.env"
-                        chmod 600 "$SHARED_DIR/.env"
-                        ln -s "$SHARED_DIR/data" "$RELEASE_DIR/data"
-                        ln -s "$SHARED_DIR/logs" "$RELEASE_DIR/logs"
-                        ln -s "$SHARED_DIR/config" "$RELEASE_DIR/config"
-                        ln -s "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
-                        printf '%s' "$GIT_COMMIT" > "$RELEASE_DIR/COMMIT"
+                            printf 'C_APP_SECRET=%s\n' "$C_APP_SECRET"; printf 'C_ADMIN_PASSWORD=%s\n' "$C_ADMIN_PASSWORD"; printf 'C_RUN_TOKEN=%s\n' "$C_RUN_TOKEN"
+                            printf 'C_UBUNTU_USER=%s\n' "$C_UBUNTU_USER"; printf 'C_UBUNTU_PASSWORD=%s\n' "$C_UBUNTU_PASSWORD"
+                            printf 'C_CENTOS_USER=%s\n' "$C_CENTOS_USER"; printf 'C_CENTOS_PASSWORD=%s\n' "$C_CENTOS_PASSWORD"
+                            printf 'C_POSTGRES_USER=%s\n' "$C_POSTGRES_USER"; printf 'C_POSTGRES_PASSWORD=%s\n' "$C_POSTGRES_PASSWORD"
+                            printf 'C_MYSQL_USER=%s\n' "$C_MYSQL_USER"; printf 'C_MYSQL_PASSWORD=%s\n' "$C_MYSQL_PASSWORD"
+                            printf 'C_JENKINS_USER=%s\n' "$C_JENKINS_USER"; printf 'C_JENKINS_TOKEN=%s\n' "$C_JENKINS_TOKEN"
+                            printf 'BUILD_NUMBER=%s\nGIT_SHORT_SHA=%s\nGIT_COMMIT=%s\nIMAGE_TAG=%s\nRELEASE_ID=%s\n' "$BUILD_NUMBER" "$GIT_SHORT_SHA" "$GIT_COMMIT" "$IMAGE_TAG" "$RELEASE_ID"
+                        } | sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "umask 077; cat > '$REMOTE_WORKSPACE/.jenkins-secrets'"
+                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && bash deploy/jenkins-deploy.sh"
                     '''
                 }
             }
         }
-
-        stage('Deploy and Health Check') {
-            steps {
-                script {
-                    env.PREVIOUS_RELEASE = sh(script: 'readlink -f "$DEPLOY_ROOT/current" 2>/dev/null || true', returnStdout: true).trim()
-                }
-                sh '''
-                    set -eu
-                    RELEASE_DIR="$DEPLOY_ROOT/releases/$RELEASE_ID"
-                    ln -sfn "$RELEASE_DIR" "$DEPLOY_ROOT/current"
-                    cd "$RELEASE_DIR"
-                    docker compose -p personal-system-inspector up -d --remove-orphans
-                    attempts=0
-                    until curl --fail --silent --max-time 5 "http://127.0.0.1:$INTERNAL_PORT/health/live" >/dev/null && curl --fail --silent --max-time 5 "http://127.0.0.1:$INTERNAL_PORT/health/ready" >/dev/null; do
-                        attempts=$((attempts + 1))
-                        if [ "$attempts" -ge 18 ]; then
-                            docker compose -p personal-system-inspector logs --tail=120
-                            exit 1
-                        fi
-                        sleep 5
-                    done
-                    echo "Deployment healthy: release=$RELEASE_ID port=$INTERNAL_PORT"
-                '''
-            }
-        }
-
-        stage('Cleanup Old Releases') {
-            steps {
-                sh '''
-                    set -eu
-                    find "$DEPLOY_ROOT/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk 'NR>5 {$1=""; sub(/^ /,""); print}' | while IFS= read -r old_release; do
-                        [ -n "$old_release" ] || continue
-                        [ "$(readlink -f "$DEPLOY_ROOT/current")" = "$(readlink -f "$old_release")" ] || rm -rf -- "$old_release"
-                    done
-                    docker image rm "$APP_NAME-test:$BUILD_NUMBER" >/dev/null 2>&1 || true
-                    docker image prune -f --filter 'until=168h' >/dev/null
-                '''
-            }
-        }
     }
-
     post {
-        failure {
-            sh '''
-                set +e
-                if [ -n "${PREVIOUS_RELEASE:-}" ] && [ -d "$PREVIOUS_RELEASE" ]; then
-                    echo "Rolling back to $PREVIOUS_RELEASE"
-                    ln -sfn "$PREVIOUS_RELEASE" "$DEPLOY_ROOT/current"
-                    cd "$PREVIOUS_RELEASE"
-                    docker compose -p personal-system-inspector up -d --remove-orphans
-                    curl --fail --silent --retry 12 --retry-delay 5 "http://127.0.0.1:$INTERNAL_PORT/health/ready"
-                else
-                    echo 'No previous release is available for rollback.'
-                fi
-            '''
-        }
         always {
+            withCredentials([usernamePassword(credentialsId: 'personal-inspector-ubuntu-ssh', usernameVariable: 'C_UBUNTU_USER', passwordVariable: 'C_UBUNTU_PASSWORD')]) {
+                sh '''
+                    set +x
+                    export SSHPASS="$C_UBUNTU_PASSWORD"
+                    sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "target='${REMOTE_WORKSPACE:-}'; case \"\$target\" in /tmp/personal-inspector-jenkins-*) rm -rf -- \"\$target\" ;; esac; docker image rm '$APP_NAME-test:$BUILD_NUMBER' >/dev/null 2>&1 || true" || true
+                '''
+            }
             echo "Build ${env.BUILD_NUMBER}; commit ${env.GIT_COMMIT}; release ${env.RELEASE_ID}"
         }
     }

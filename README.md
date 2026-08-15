@@ -97,7 +97,7 @@ JSON 断言支持嵌套路径、等值、包含和时间字段 `max_age_seconds`
 - Script Path：`src/JenkinsConfig/Jenkinsfile`
 - SCM 轮询：`H/30 * * * *`
 
-流水线执行 Ruff、pytest、生产镜像构建、`/opt/personal-system-inspector/releases/<build>-<sha>` 版本化发布、双健康检查、失败回滚和旧版本清理。详情见 [部署说明](docs/部署说明.md)。
+流水线通过受管 SSH 凭据在目标机执行 Ruff、pytest、生产镜像构建、`/opt/personal-system-inspector/releases/<build>-<sha>` 版本化发布、双健康检查、失败回滚和旧版本清理；Jenkins 用户无需加入 Docker 组。详情见 [部署说明](docs/部署说明.md)。
 
 ## 运维
 
