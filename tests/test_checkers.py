@@ -61,6 +61,26 @@ async def test_http_check_ignores_inherited_proxy(monkeypatch):
     assert captured["trust_env"] is False
 
 
+@pytest.mark.asyncio
+async def test_empty_exception_message_falls_back_to_exception_type():
+    class TimeoutClient:
+        async def request(self, *_args, **_kwargs):
+            raise httpx.ReadTimeout("")
+
+    runner = CheckRunner({}, "Asia/Shanghai", client=TimeoutClient())
+    result = await runner.run(
+        {
+            "id": "timeout",
+            "name": "timeout",
+            "category": "service",
+            "type": "http",
+            "url": "https://example.test",
+        }
+    )
+    assert result.status == "CRITICAL"
+    assert result.message == "检查异常: ReadTimeout"
+
+
 def test_json_assertion_supports_nested_fields_and_freshness():
     now = datetime.now(ZoneInfo("UTC")).isoformat()
     failures = evaluate_json_assertions({"data": {"state": "ready", "updated": now}}, [{"path": "data.state", "equals": "ready"}, {"path": "data.updated", "max_age_seconds": 60}])

@@ -135,7 +135,8 @@ class CheckRunner:
             result.metrics = redact(result.metrics)
             return result
         except Exception as exc:
-            return self._result(item, "CRITICAL", f"检查异常: {redact(str(exc))}", started)
+            detail = str(exc).strip() or exc.__class__.__name__
+            return self._result(item, "CRITICAL", f"检查异常: {redact(detail)}", started)
 
     def _result(
         self,
