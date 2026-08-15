@@ -69,7 +69,8 @@ pytest -q
 - 周期巡检默认每 15 分钟执行。
 - HTML 日报默认北京时间每日 08:00 执行。
 - CRITICAL 默认连续失败 3 次才开启事件；同一事件不重复通知。
-- WARNING 立即形成可见事件；OK 后关闭事件并仅发送一次恢复通知。
+- WARNING 立即形成可见事件并进入日报，但不发送即时邮件。
+- CRITICAL 连续达到阈值后仅发送一次即时告警；已发告警的事件恢复后仅发送一次恢复通知。
 - 未配置 SMTP 时，日报写入 `data/reports/`，邮件测试接口返回 `preview` 模式。
 
 管理员可打开 `/api/email/preview` 预览日报，或调用 `POST /api/email/test` 发送测试邮件。
@@ -85,7 +86,7 @@ pytest -q
 - `postgres`、`mysql`：连接参数全部通过环境变量
 - `jenkins`：Jenkins URL 和 API 凭据通过环境变量
 
-JSON 断言支持嵌套路径、等值、包含和时间字段 `max_age_seconds`。修改生产 `config/app.json` 或 `checks.yaml` 后重启容器；Jenkins 增量部署不会覆盖共享配置。
+JSON 断言支持嵌套路径、等值、包含和时间字段 `max_age_seconds`。生产 `app.json` 属于运维配置，Jenkins 增量部署不会覆盖；`checks.yaml` 属于版本化巡检清单，会随发布更新。
 
 ## Jenkins 部署
 
@@ -115,7 +116,7 @@ curl http://127.0.0.1:31880/health/ready
 - `UNKNOWN`：检查对应环境变量/只读凭据是否已配置。
 - 页面登录失败：检查共享 `data/password.txt` 格式与权限。
 - `ready` 返回 503：检查共享 data 目录可写和 SQLite 文件权限。
-- Jenkins 构建无法访问 Docker：确认 `jenkins` 用户属于 `docker` 组并重启过 Jenkins。
+- Jenkins 构建无法访问 Docker：确认回环 SSH 凭据可用、`sshpass` 已安装，并确认受管部署用户可以访问 Docker；无需把 `jenkins` 用户加入 `docker` 组。
 - HTTP 200 但业务异常：为该检查增加 JSON、关键字或数据更新时间断言。
 - SMTP 未发送：检查 `SMTP_HOST/SMTP_FROM/SMTP_TO`，再调用测试邮件接口；不要把授权码发到日志。
 
