@@ -49,6 +49,7 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+.pytest-tmp/
 cover/
 
 # Translations
@@ -205,9 +206,23 @@ tempCodeRunnerFile.py
 
 # Ruff stuff:
 .ruff_cache/
+.frontend-cache/
+.npm-cache/
+.inspection-source.tgz
 
 # PyPI configuration file
 .pypirc
+
+# Personal System Inspector runtime files and secrets
+logs/
+data/*.sqlite3
+data/*.sqlite3-*
+data/password.txt
+data/reports/
+config/app.local.json
+config/checks.local.yaml
+.env.*
+!.env.example
 
 # Marimo
 marimo/_static/

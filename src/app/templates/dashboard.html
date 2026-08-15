@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ app_name }}</title><link rel="stylesheet" href="/static/app.css"></head>
+<body>
+{% raw %}
+<div id="app" class="layout">
+  <aside class="sidebar">
+    <div class="brand">统一巡检中心</div>
+    <nav class="nav">
+      <button v-for="item in navigation" :key="item.id" :class="{active: view===item.id}" @click="select(item.id)">{{ item.label }}</button>
+    </nav>
+    <div class="account"><div>当前用户：{{ bootstrap.user.username }}</div><div>角色：{{ bootstrap.user.role }}</div><div>版本：{{ bootstrap.version }}</div><form method="post" action="/logout"><button>退出登录</button></form></div>
+  </aside>
+  <main class="main">
+    <div class="topbar"><div><h1>{{ currentTitle }}</h1><div class="muted">最近巡检：{{ formatTime(summary.last_inspection?.finished_at || summary.last_inspection?.started_at) }}</div></div><div class="actions"><button class="secondary" @click="loadAll">刷新</button><button v-if="bootstrap.user.role==='admin'" class="primary" @click="runInspection" :disabled="running">{{ running ? '巡检中…' : '立即巡检' }}</button></div></div>
+    <template v-if="view==='dashboard'">
+      <section class="cards"><div class="card"><div class="muted">总体状态</div><div class="value"><span :class="['status',summary.overall_status]">{{ summary.overall_status || 'UNKNOWN' }}</span></div></div><div class="card"><div class="muted">检查项</div><div class="value">{{ summary.total || 0 }}</div></div><div class="card"><div class="muted">正常</div><div class="value">{{ summary.counts?.OK || 0 }}</div></div><div class="card"><div class="muted">警告</div><div class="value">{{ summary.counts?.WARNING || 0 }}</div></div><div class="card"><div class="muted">严重 / 未知</div><div class="value">{{ (summary.counts?.CRITICAL || 0) + (summary.counts?.UNKNOWN || 0) }}</div></div></section>
+      <section class="panel"><h2>当前异常</h2><incident-table :items="summary.open_incidents || []"></incident-table></section>
+      <section class="panel"><h2>最近恢复</h2><incident-table :items="summary.recovered_incidents || []"></incident-table></section>
+    </template>
+    <section v-else-if="categoryViews[view]" class="panel"><h2>{{ currentTitle }}检查结果</h2><check-table :items="filteredChecks"></check-table></section>
+    <section v-else-if="view==='history'" class="panel"><h2>最近 30 天总体状态</h2><table><thead><tr><th>日期</th><th>OK</th><th>WARNING</th><th>CRITICAL</th><th>UNKNOWN</th></tr></thead><tbody><tr v-for="row in history"><td>{{ row.date }}</td><td>{{ row.OK }}</td><td>{{ row.WARNING }}</td><td>{{ row.CRITICAL }}</td><td>{{ row.UNKNOWN }}</td></tr></tbody></table></section>
+    <section v-else-if="view==='tasks'" class="panel"><h2>调度计划</h2><table><thead><tr><th>任务</th><th>下次执行</th><th>触发器</th></tr></thead><tbody><tr v-for="job in tasks.scheduled"><td>{{ job.name }}</td><td>{{ formatTime(job.next_run_time) }}</td><td>{{ job.trigger }}</td></tr></tbody></table><h2 style="margin-top:24px">执行历史</h2><table><thead><tr><th>任务</th><th>状态</th><th>开始</th><th>结束</th><th>结果</th></tr></thead><tbody><tr v-for="task in tasks.history"><td>{{ task.name }}</td><td><span :class="['status',task.status==='SUCCESS'?'OK':task.status==='FAILED'?'CRITICAL':'UNKNOWN']">{{ task.status }}</span></td><td>{{ formatTime(task.started_at) }}</td><td>{{ formatTime(task.finished_at) }}</td><td>{{ task.detail }}</td></tr></tbody></table></section>
+    <section v-else-if="view==='config'" class="panel"><h2>脱敏后的当前配置</h2><pre>{{ JSON.stringify(config,null,2) }}</pre></section>
+    <section v-else-if="view==='users'" class="panel"><h2>权限管理</h2><p class="muted">用户账号来自 data/password.txt；管理员拥有全部页面。普通用户页面权限通过 API 维护。</p><table><thead><tr><th>用户名</th><th>角色</th><th>可访问页面</th></tr></thead><tbody><tr v-for="user in users"><td>{{ user.username }}</td><td>{{ user.role }}</td><td>{{ user.pages.join(', ') }}</td></tr></tbody></table></section>
+  </main>
+</div>
+{% endraw %}
+<script>window.INSPECTOR_BOOTSTRAP={{ {"user": user, "version": version, "pages": pages}|tojson }};</script>
+{% raw %}
+<script src="/static/vue.global.prod.js"></script>
+<script>
+const {createApp}=Vue;
+const CheckTable={props:['items'],template:`<table><thead><tr><th>状态</th><th>名称</th><th>最近检查</th><th>响应</th><th>连续失败</th><th>摘要</th></tr></thead><tbody><tr v-for="item in items" :key="item.check_id"><td><span :class="['status',item.status]">{{item.status}}</span></td><td>{{item.name}}</td><td>{{new Date(item.last_checked_at).toLocaleString('zh-CN')}}</td><td>{{item.latency_ms==null?'—':Math.round(item.latency_ms)+'ms'}}</td><td>{{item.consecutive_failures}}</td><td class="message">{{item.message}}</td></tr></tbody></table>`};
+const IncidentTable={props:['items'],template:`<table><thead><tr><th>状态</th><th>系统</th><th>首次发生</th><th>失败次数</th><th>持续时间</th><th>最近错误</th></tr></thead><tbody><tr v-if="!items.length"><td colspan="6" class="muted">暂无记录</td></tr><tr v-for="item in items" :key="item.id"><td><span :class="['status',item.status==='RECOVERED'?'OK':item.severity]">{{item.status}}</span></td><td>{{item.name}}</td><td>{{new Date(item.first_seen_at).toLocaleString('zh-CN')}}</td><td>{{item.failure_count}}</td><td>{{Math.round(item.duration_seconds/60)}} 分钟</td><td class="message">{{item.last_error}}</td></tr></tbody></table>`};
+createApp({components:{CheckTable,IncidentTable},data(){return{bootstrap:window.INSPECTOR_BOOTSTRAP,view:'dashboard',summary:{counts:{}},checks:[],history:[],tasks:{scheduled:[],history:[]},config:{},users:[],running:false,categoryViews:{hosts:'host',services:'service',docker:'docker',databases:'database',logs:'log',jenkins:'jenkins'},allNav:[['dashboard','总览'],['hosts','主机'],['services','服务和接口'],['docker','Docker'],['databases','数据库'],['logs','日志'],['jenkins','Jenkins 和定时任务'],['history','历史记录'],['tasks','任务中心'],['config','系统配置'],['users','权限管理']]}},computed:{navigation(){return this.allNav.filter(([id])=>this.bootstrap.user.role==='admin'||this.bootstrap.pages.includes('*')||this.bootstrap.pages.includes(id)).map(([id,label])=>({id,label}))},currentTitle(){return this.navigation.find(x=>x.id===this.view)?.label||'总览'},filteredChecks(){return(this.summary.states||[]).filter(x=>x.category===this.categoryViews[this.view])}},methods:{formatTime(v){return v?new Date(v).toLocaleString('zh-CN'):'尚无'},async json(url,options){const r=await fetch(url,options);if(r.status===401){location='/login';throw new Error('未登录')}if(!r.ok)throw new Error(await r.text());return r.json()},async loadAll(){this.summary=await this.json('/api/summary');this.checks=await this.json('/api/checks?limit=1000');this.history=await this.json('/api/history');this.tasks=await this.json('/api/tasks');if(this.bootstrap.user.role==='admin'){this.config=await this.json('/api/config');this.users=await this.json('/api/users')}},async runInspection(){this.running=true;try{await this.json('/api/run',{method:'POST'});await this.loadAll()}catch(e){alert(e.message)}finally{this.running=false}},select(id){this.view=id}} ,mounted(){this.loadAll();setInterval(()=>this.loadAll(),60000)}}).mount('#app');
+</script></body></html>
+{% endraw %}

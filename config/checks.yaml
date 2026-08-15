@@ -1,0 +1,75 @@
+defaults:
+  timeout_seconds: 8
+  failure_threshold: 3
+  warning_response_ms: 3000
+  tls_warning_days: 30
+  tls_critical_days: 7
+  disk_warning_percent: 80
+  disk_critical_percent: 90
+  inode_warning_percent: 80
+  max_log_bytes: 5242880
+
+checks:
+  # 主机基础在线检查；SSH 凭据存在时会采集完整主机指标。
+  - {id: host-nas-tcp, name: NAS 在线, category: host, type: tcp, host: 192.168.0.100, port: 8090}
+  - {id: host-ubuntu-ssh, name: Ubuntu 应用服务器, category: host, type: host_ssh, host: 192.168.0.111, port: 22, username_env: UBUNTU_SSH_USERNAME, password_env: UBUNTU_SSH_PASSWORD, key_path_env: UBUNTU_SSH_KEY_PATH}
+  - {id: host-centos-ssh, name: CentOS 备用服务器, category: host, type: host_ssh, host: 192.168.0.110, port: 22, username_env: CENTOS_SSH_USERNAME, password_env: CENTOS_SSH_PASSWORD, key_path_env: CENTOS_SSH_KEY_PATH}
+
+  # 内网服务
+  - {id: svc-blog-internal, name: 个人博客（内网）, category: service, type: http, url: 'http://192.168.0.100:8090', expected_status: [200, 301, 302]}
+  - {id: svc-hermes-internal, name: Hermes Agent（内网）, category: service, type: http, url: 'http://192.168.0.111:9119', expected_status: [200, 302, 401, 403]}
+  - {id: svc-truth-internal, name: 特朗普贴文分析（内网）, category: service, type: http, url: 'http://192.168.0.111:8000/health/live', expected_status: [200]}
+  - {id: svc-jenkins-internal, name: Jenkins（内网）, category: jenkins, type: http, url: 'http://192.168.0.111:8080/login', expected_status: [200]}
+  - {id: svc-dashboard-internal, name: Nginx Dashboard（内网）, category: service, type: http, url: 'http://192.168.0.100:18081', expected_status: [200, 301, 302, 401, 403]}
+  - {id: svc-jellyfin-internal, name: Jellyfin（内网）, category: service, type: http, url: 'http://192.168.0.100:8899', expected_status: [200, 302]}
+  - {id: svc-clash-internal, name: Clash Dashboard（内网）, category: service, type: http, url: 'http://192.168.0.100:9097', expected_status: [200, 401, 403]}
+  - {id: svc-rsshub-internal, name: RSSHub（内网）, category: service, type: http, url: 'http://192.168.0.100:11200', expected_status: [200, 301, 302]}
+  - {id: svc-kavita-internal, name: Kavita（内网）, category: service, type: http, url: 'http://192.168.0.100:15000', expected_status: [200, 302]}
+  - {id: svc-portainer-internal, name: Portainer（内网）, category: service, type: http, url: 'https://192.168.0.100:19443', expected_status: [200, 307, 401, 403], verify_tls: false}
+  - {id: svc-freshrss-internal, name: FreshRSS（内网）, category: service, type: http, url: 'http://192.168.0.100:11210', expected_status: [200, 302]}
+  - {id: svc-vaultwarden-internal, name: Vaultwarden（内网）, category: service, type: http, url: 'http://192.168.0.100:18088', expected_status: [200]}
+  - {id: svc-gitea-internal, name: Gitea（内网）, category: service, type: http, url: 'http://192.168.0.100:30000', expected_status: [200, 302]}
+  - {id: svc-persontracking-internal, name: 公开人物行程追踪（内网）, category: service, type: http, url: 'http://192.168.0.111:28000/health/live', expected_status: [200]}
+  - {id: svc-trilium-internal, name: Trilium（内网）, category: service, type: http, url: 'http://192.168.0.100:28080', expected_status: [200, 302]}
+  - {id: svc-seniorprofile-internal, name: 高级官员履历分析（内网）, category: service, type: http, url: 'http://192.168.0.111:33380/health/live', expected_status: [200]}
+  - {id: svc-qinglong-internal, name: 青龙（内网）, category: service, type: http, url: 'http://192.168.0.100:5700', expected_status: [200, 302]}
+  - {id: svc-infoanalysis-internal, name: 信息智能分析（内网）, category: service, type: http, url: 'http://192.168.0.111:28080/health/live', expected_status: [200]}
+  - {id: svc-bdpan-internal, name: 百度网盘链接管理（内网）, category: service, type: http, url: 'http://192.168.0.111:29080/health/live', expected_status: [200]}
+  - {id: svc-translate-internal, name: 翻译服务（内网）, category: service, type: http, url: 'http://192.168.0.100:11880/health', expected_status: [200], json_assertions: [{path: status, equals: ok}]}
+  - {id: svc-ocr-internal, name: OCR 服务（内网）, category: service, type: http, url: 'http://192.168.0.100:11980/health', expected_status: [200], json_assertions: [{path: status, equals: ok}]}
+  - {id: svc-policy-internal, name: 政策分析（内网）, category: service, type: http, url: 'http://192.168.0.111:30080/health/live', expected_status: [200]}
+  - {id: svc-webfetch-internal, name: WebFetch（内网）, category: service, type: http, url: 'http://192.168.0.111:33333/health/ready', expected_status: [200]}
+
+  # 公网域名基础检查与 TLS 到期检查
+  - {id: pub-blog, name: 个人博客（公网）, category: service, type: http, url: 'https://yuan-xin.top', expected_status: [200, 301, 302]}
+  - {id: pub-hermes, name: Hermes Agent（公网）, category: service, type: http, url: 'https://hermes.yuan-xin.top', expected_status: [200, 302, 401, 403]}
+  - {id: pub-truth, name: 特朗普贴文分析（公网）, category: service, type: http, url: 'https://truth.yuan-xin.top/health/live', expected_status: [200]}
+  - {id: pub-jenkins, name: Jenkins（公网）, category: jenkins, type: http, url: 'https://jenkins.yuan-xin.top/login', expected_status: [200]}
+  - {id: pub-nginx, name: Nginx Dashboard（公网）, category: service, type: http, url: 'https://nginx.yuan-xin.top', expected_status: [200, 301, 302, 401, 403]}
+  - {id: pub-jellyfin, name: Jellyfin（公网）, category: service, type: http, url: 'https://jellyfin.yuan-xin.top', expected_status: [200, 302]}
+  - {id: pub-clash, name: Clash Dashboard（公网）, category: service, type: http, url: 'https://clash.yuan-xin.top', expected_status: [200, 401, 403]}
+  - {id: pub-rsshub, name: RSSHub（公网）, category: service, type: http, url: 'https://rsshub.yuan-xin.top', expected_status: [200, 301, 302]}
+  - {id: pub-read, name: Kavita（公网）, category: service, type: http, url: 'https://read.yuan-xin.top', expected_status: [200, 302]}
+  - {id: pub-portainer, name: Portainer（公网）, category: docker, type: http, url: 'https://portainer.yuan-xin.top', expected_status: [200, 307, 401, 403]}
+  - {id: pub-rss, name: FreshRSS（公网）, category: service, type: http, url: 'https://rss.yuan-xin.top', expected_status: [200, 302]}
+  - {id: pub-vault, name: Vaultwarden（公网）, category: service, type: http, url: 'https://vault.yuan-xin.top', expected_status: [200]}
+  - {id: pub-gitea, name: Gitea（公网）, category: service, type: http, url: 'https://gitea.yuan-xin.top', expected_status: [200, 302]}
+  - {id: pub-persontracking, name: 公开人物行程追踪（公网）, category: service, type: http, url: 'https://persontracking.yuan-xin.top/health/live', expected_status: [200]}
+  - {id: pub-trilium, name: Trilium（公网）, category: service, type: http, url: 'https://trilium.yuan-xin.top', expected_status: [200, 302]}
+  - {id: pub-seniorprofile, name: 高级官员履历分析（公网）, category: service, type: http, url: 'https://seniorprofile.yuan-xin.top/health/live', expected_status: [200]}
+  - {id: pub-qinglong, name: 青龙（公网）, category: service, type: http, url: 'https://qinglong.yuan-xin.top', expected_status: [200, 302]}
+  - {id: pub-infoanalysis, name: 信息智能分析（公网）, category: service, type: http, url: 'https://infoanalysis.yuan-xin.top/health/live', expected_status: [200]}
+  - {id: pub-bdpan, name: 百度网盘链接管理（公网）, category: service, type: http, url: 'https://bdpan.yuan-xin.top/health/live', expected_status: [200]}
+  - {id: pub-translate, name: 翻译服务（公网）, category: service, type: http, url: 'https://translate.yuan-xin.top/health', expected_status: [200]}
+  - {id: pub-ocr, name: OCR 服务（公网）, category: service, type: http, url: 'https://ocr.yuan-xin.top/health', expected_status: [200]}
+  - {id: pub-policy, name: 政策分析（公网）, category: service, type: http, url: 'https://policy.yuan-xin.top/health/live', expected_status: [200]}
+
+  # 数据库检查仅执行只读 SHOW/SELECT。
+  - {id: db-postgres, name: NAS PostgreSQL, category: database, type: postgres, host_env: POSTGRES_HOST, port_env: POSTGRES_PORT, username_env: POSTGRES_USER, password_env: POSTGRES_PASSWORD, database_env: POSTGRES_DB}
+  - {id: db-mysql, name: CentOS MySQL, category: database, type: mysql, host_env: MYSQL_HOST, port_env: MYSQL_PORT, username_env: MYSQL_USER, password_env: MYSQL_PASSWORD, database_env: MYSQL_DB}
+
+  # Docker、日志与 Jenkins 深度采集。没有凭据时返回 UNKNOWN，不泄露环境变量。
+  - {id: docker-ubuntu, name: Ubuntu Docker, category: docker, type: docker_ssh, host: 192.168.0.111, username_env: UBUNTU_SSH_USERNAME, password_env: UBUNTU_SSH_PASSWORD, key_path_env: UBUNTU_SSH_KEY_PATH}
+  - {id: docker-nas, name: NAS Docker, category: docker, type: docker_ssh, host: 192.168.0.100, username_env: NAS_SSH_USERNAME, password_env: NAS_SSH_PASSWORD, key_path_env: NAS_SSH_KEY_PATH}
+  - {id: logs-analysis, name: 分析类系统日志, category: log, type: log_ssh, host: 192.168.0.111, username_env: UBUNTU_SSH_USERNAME, password_env: UBUNTU_SSH_PASSWORD, key_path_env: UBUNTU_SSH_KEY_PATH, paths: ['/opt/*AnalysisSystem/logs/*.log', '/opt/*TrackingSystem/logs/*.log', '/opt/BaiduPanShareManagement/logs/*.log'], expect_growth: true}
+  - {id: jenkins-jobs, name: Jenkins 任务, category: jenkins, type: jenkins, url_env: JENKINS_URL, username_env: JENKINS_USERNAME, password_env: JENKINS_API_TOKEN}

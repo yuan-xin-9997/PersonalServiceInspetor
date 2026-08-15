@@ -1,0 +1,15 @@
+[Unit]
+Description=Personal System Inspector (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/personal-system-inspector/current
+ExecStart=/usr/bin/docker compose -p personal-system-inspector up -d
+ExecStop=/usr/bin/docker compose -p personal-system-inspector down
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+{
+  "app": {
+    "name": "个人系统统一巡检中心",
+    "version": "1.0.0",
+    "host": "0.0.0.0",
+    "port": 31880,
+    "timezone": "Asia/Shanghai",
+    "public_base_url": "http://192.168.0.111:31880"
+  },
+  "storage": {
+    "database_url": "sqlite:///./data/inspector.sqlite3",
+    "report_directory": "./data/reports"
+  },
+  "scheduler": {
+    "enabled": true,
+    "inspection_interval_minutes": 15,
+    "daily_report_hour": 8,
+    "daily_report_minute": 0,
+    "run_on_startup": true
+  },
+  "security": {
+    "password_file": "./data/password.txt",
+    "session_cookie_secure": false,
+    "session_max_age_seconds": 43200
+  },
+  "logging": {
+    "path": "./logs/app.log",
+    "retention_days": 30,
+    "max_bytes": 10485760,
+    "backup_count": 14
+  }
+}

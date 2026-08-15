@@ -1,0 +1,19 @@
+services:
+  inspector:
+    image: ${INSPECTOR_IMAGE:-personal-system-inspector:latest}
+    container_name: personal-system-inspector
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_CONFIG_PATH: /app/config/app.json
+      CHECKS_CONFIG_PATH: /app/config/checks.yaml
+      APP_VERSION: ${APP_VERSION:-dev}
+    ports:
+      - "${INSPECTOR_PORT:-31880}:31880"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
