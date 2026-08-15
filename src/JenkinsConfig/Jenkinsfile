@@ -11,7 +11,6 @@ pipeline {
         APP_NAME = 'personal-system-inspector'
         DEPLOY_ROOT = '/opt/personal-system-inspector'
         INTERNAL_PORT = '31880'
-        IMAGE_REPOSITORY = 'personal-system-inspector'
     }
     stages {
         stage('Checkout') {
@@ -20,7 +19,6 @@ pipeline {
                 script {
                     env.GIT_SHORT_SHA = sh(script: 'git rev-parse --short=12 HEAD', returnStdout: true).trim()
                     env.RELEASE_ID = "${env.BUILD_NUMBER}-${env.GIT_SHORT_SHA}"
-                    env.IMAGE_TAG = "${env.IMAGE_REPOSITORY}:${env.GIT_SHORT_SHA}"
                     env.REMOTE_WORKSPACE = "/tmp/personal-inspector-jenkins-${env.BUILD_NUMBER}"
                     currentBuild.displayName = "#${env.BUILD_NUMBER} ${env.GIT_SHORT_SHA}"
                 }
@@ -65,7 +63,7 @@ pipeline {
                     sh '''
                         set +x
                         export SSHPASS="$C_UBUNTU_PASSWORD"
-                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && docker build --target test -t '$APP_NAME-test:$BUILD_NUMBER' . && docker run --rm '$APP_NAME-test:$BUILD_NUMBER' ruff check ."
+                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && python3.12 -m venv .test-venv && PIP_DISABLE_PIP_VERSION_CHECK=1 .test-venv/bin/pip install --retries 5 --timeout 60 -e '.[dev]' && .test-venv/bin/ruff check ."
                     '''
                 }
             }
@@ -76,18 +74,18 @@ pipeline {
                     sh '''
                         set +x
                         export SSHPASS="$C_UBUNTU_PASSWORD"
-                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && docker run --rm '$APP_NAME-test:$BUILD_NUMBER' pytest -q"
+                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && .test-venv/bin/pytest -q"
                     '''
                 }
             }
         }
-        stage('Build Production Image') {
+        stage('Native Package Check') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'personal-inspector-ubuntu-ssh', usernameVariable: 'C_UBUNTU_USER', passwordVariable: 'C_UBUNTU_PASSWORD')]) {
                     sh '''
                         set +x
                         export SSHPASS="$C_UBUNTU_PASSWORD"
-                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && docker build --target runtime -t '$IMAGE_TAG' ."
+                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && PYTHONPYCACHEPREFIX=.compile-cache .test-venv/bin/python -m compileall -q src && bash -n deploy/jenkins-deploy.sh"
                     '''
                 }
             }
@@ -115,7 +113,7 @@ pipeline {
                             printf 'C_POSTGRES_USER=%s\n' "$C_POSTGRES_USER"; printf 'C_POSTGRES_PASSWORD=%s\n' "$C_POSTGRES_PASSWORD"
                             printf 'C_MYSQL_USER=%s\n' "$C_MYSQL_USER"; printf 'C_MYSQL_PASSWORD=%s\n' "$C_MYSQL_PASSWORD"
                             printf 'C_JENKINS_USER=%s\n' "$C_JENKINS_USER"; printf 'C_JENKINS_TOKEN=%s\n' "$C_JENKINS_TOKEN"
-                            printf 'BUILD_NUMBER=%s\nGIT_SHORT_SHA=%s\nGIT_COMMIT=%s\nIMAGE_TAG=%s\nRELEASE_ID=%s\n' "$BUILD_NUMBER" "$GIT_SHORT_SHA" "$GIT_COMMIT" "$IMAGE_TAG" "$RELEASE_ID"
+                            printf 'BUILD_NUMBER=%s\nGIT_SHORT_SHA=%s\nGIT_COMMIT=%s\nRELEASE_ID=%s\n' "$BUILD_NUMBER" "$GIT_SHORT_SHA" "$GIT_COMMIT" "$RELEASE_ID"
                         } | sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "umask 077; cat > '$REMOTE_WORKSPACE/.jenkins-secrets'"
                         sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && bash deploy/jenkins-deploy.sh"
                     '''
@@ -129,7 +127,7 @@ pipeline {
                 sh '''
                     set +x
                     export SSHPASS="$C_UBUNTU_PASSWORD"
-                    sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "rm -rf -- '${REMOTE_WORKSPACE:-/tmp/personal-inspector-jenkins-$BUILD_NUMBER}'; docker image rm '$APP_NAME-test:$BUILD_NUMBER' >/dev/null 2>&1 || true" || true
+                    sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "rm -rf -- '${REMOTE_WORKSPACE:-/tmp/personal-inspector-jenkins-$BUILD_NUMBER}'" || true
                 '''
             }
             echo "Build ${env.BUILD_NUMBER}; commit ${env.GIT_COMMIT}; release ${env.RELEASE_ID}"

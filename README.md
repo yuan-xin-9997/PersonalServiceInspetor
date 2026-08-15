@@ -14,7 +14,7 @@ FastAPI + Vue 管理页面 ---------^
 - Python 3.12、FastAPI、Vue 3、APScheduler
 - SQLAlchemy + SQLite 持久化，无 Redis、Celery 或监控重型组件
 - HTTPX、Paramiko、psycopg、PyMySQL 只读采集
-- Docker Compose 生产运行，Jenkins 版本化发布与失败回滚
+- Python 3.12 独立 virtualenv + systemd 生产运行，Jenkins 版本化发布与失败回滚
 
 ## 页面
 
@@ -38,8 +38,11 @@ FastAPI + Vue 管理页面 ---------^
 ```bash
 cp .env.example .env
 # 编辑 .env，至少配置 APP_SECRET_KEY、ADMIN_INITIAL_PASSWORD、RUN_API_TOKEN
-docker compose build
-docker compose up -d
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+# 按文档创建 data/password.txt 后启动本地进程
+uvicorn app.main:app --host 0.0.0.0 --port 31880 --proxy-headers --env-file .env
 curl --fail http://127.0.0.1:31880/health/ready
 ```
 
@@ -98,25 +101,25 @@ JSON 断言支持嵌套路径、等值、包含和时间字段 `max_age_seconds`
 - Script Path：`src/JenkinsConfig/Jenkinsfile`
 - SCM 轮询：`H/30 * * * *`
 
-流水线通过受管 SSH 凭据在目标机执行 Ruff、pytest、生产镜像构建、`/opt/personal-system-inspector/releases/<build>-<sha>` 版本化发布、双健康检查、失败回滚和旧版本清理；Jenkins 用户无需加入 Docker 组。详情见 [部署说明](docs/部署说明.md)。
+流水线通过受管 SSH 凭据在目标机创建 Python 3.12 virtualenv，执行 Ruff、pytest、`/opt/personal-system-inspector/releases/<build>-<sha>` 版本化发布、systemd 重启、双健康检查和失败回滚。每个发布版本拥有独立 `.venv`，线上保留当前版本和两个历史版本。详情见 [部署说明](docs/部署说明.md)。
 
 ## 运维
 
 ```bash
-cd /opt/personal-system-inspector/current
-docker compose -p personal-system-inspector ps
-docker compose -p personal-system-inspector logs --tail=200
+systemctl status personal-system-inspector
+journalctl -u personal-system-inspector -n 200 --no-pager
 curl http://127.0.0.1:31880/health/ready
 ```
 
-也提供 `deploy/personal-system-inspector.service`，可选地由 systemd 统一启停 Compose。默认不执行自动修复、日志清理、容器重启或数据库写入。
+生产服务由 `deploy/personal-system-inspector.service` 直接托管 Uvicorn。默认不执行自动修复、日志清理、容器重启或数据库写入。
 
 ## 常见故障排查
 
 - `UNKNOWN`：检查对应环境变量/只读凭据是否已配置。
 - 页面登录失败：检查共享 `data/password.txt` 格式与权限。
 - `ready` 返回 503：检查共享 data 目录可写和 SQLite 文件权限。
-- Jenkins 构建无法访问 Docker：确认回环 SSH 凭据可用、`sshpass` 已安装，并确认受管部署用户可以访问 Docker；无需把 `jenkins` 用户加入 `docker` 组。
+- Jenkins 无法创建运行环境：确认 Python 3.12、`python3.12-venv`、回环 SSH 凭据和 `sshpass` 可用，并查看 pip 下载错误。
+- systemd 启动失败：运行 `journalctl -u personal-system-inspector -n 200 --no-pager`，检查共享目录权限和 `.env`。
 - HTTP 200 但业务异常：为该检查增加 JSON、关键字或数据更新时间断言。
 - SMTP 未发送：检查 `SMTP_HOST/SMTP_FROM/SMTP_TO`，再调用测试邮件接口；不要把授权码发到日志。
 

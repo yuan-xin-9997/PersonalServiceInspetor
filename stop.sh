@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 set -euo pipefail
-docker compose down
+sudo systemctl stop personal-system-inspector.service

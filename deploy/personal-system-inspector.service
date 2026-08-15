@@ -1,15 +1,31 @@
 [Unit]
-Description=Personal System Inspector (Docker Compose)
-Requires=docker.service
-After=docker.service network-online.target
+Description=Personal System Inspector
+Wants=network-online.target
+After=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
+User=inspector
+Group=inspector
 WorkingDirectory=/opt/personal-system-inspector/current
-ExecStart=/usr/bin/docker compose -p personal-system-inspector up -d
-ExecStop=/usr/bin/docker compose -p personal-system-inspector down
-TimeoutStartSec=180
+EnvironmentFile=/opt/personal-system-inspector/shared/.env
+EnvironmentFile=/opt/personal-system-inspector/current/version.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/personal-system-inspector/current/src
+Environment=APP_CONFIG_PATH=/opt/personal-system-inspector/shared/config/app.json
+Environment=CHECKS_CONFIG_PATH=/opt/personal-system-inspector/shared/config/checks.yaml
+ExecStart=/opt/personal-system-inspector/current/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 31880 --proxy-headers
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/personal-system-inspector/shared/data /opt/personal-system-inspector/shared/logs
 
 [Install]
 WantedBy=multi-user.target

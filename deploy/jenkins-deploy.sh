@@ -3,7 +3,10 @@ set -Eeuo pipefail
 set +x
 
 DEPLOY_ROOT=/opt/personal-system-inspector
+SERVICE_NAME=personal-system-inspector.service
+SERVICE_USER=inspector
 INTERNAL_PORT=31880
+HISTORY_RELEASES_TO_KEEP=2
 SECRET_FILE=.jenkins-secrets
 
 [[ -f "$SECRET_FILE" ]] || { echo "Missing Jenkins secret payload" >&2; exit 2; }
@@ -14,16 +17,26 @@ rm -f -- "$SECRET_FILE"
 RELEASE_DIR="$DEPLOY_ROOT/releases/$RELEASE_ID"
 SHARED_DIR="$DEPLOY_ROOT/shared"
 PREVIOUS_RELEASE="$(readlink -f "$DEPLOY_ROOT/current" 2>/dev/null || true)"
+WAS_DOCKER_ACTIVE=0
 DEPLOYED=0
+
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq personal-system-inspector; then
+  WAS_DOCKER_ACTIVE=1
+fi
 
 cleanup_and_rollback() {
   exit_code=$?
   rm -f -- "$SECRET_FILE"
   if [[ $exit_code -ne 0 && $DEPLOYED -eq 1 && -n "$PREVIOUS_RELEASE" && -d "$PREVIOUS_RELEASE" ]]; then
     echo "Deployment failed; rolling back to $PREVIOUS_RELEASE"
+    sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
     ln -sfn "$PREVIOUS_RELEASE" "$DEPLOY_ROOT/current"
-    cd "$PREVIOUS_RELEASE"
-    docker compose -p personal-system-inspector up -d --remove-orphans
+    if [[ $WAS_DOCKER_ACTIVE -eq 1 && -f "$PREVIOUS_RELEASE/docker-compose.yml" ]]; then
+      sudo systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+      (cd "$PREVIOUS_RELEASE" && docker compose -p personal-system-inspector up -d --remove-orphans)
+    else
+      sudo systemctl restart "$SERVICE_NAME"
+    fi
     curl --fail --silent --retry 12 --retry-delay 5 "http://127.0.0.1:$INTERNAL_PORT/health/ready" >/dev/null
   fi
   exit "$exit_code"
@@ -31,17 +44,20 @@ cleanup_and_rollback() {
 trap cleanup_and_rollback EXIT
 
 mkdir -p "$RELEASE_DIR" "$SHARED_DIR/data/reports" "$SHARED_DIR/logs" "$SHARED_DIR/config"
-cp docker-compose.yml "$RELEASE_DIR/"
+cp -a pyproject.toml README.md src "$RELEASE_DIR/"
 [[ -f "$SHARED_DIR/config/app.json" ]] || cp config/app.json "$SHARED_DIR/config/app.json"
-# app.json is operator-owned after first deployment; checks.yaml is versioned
-# application data and must follow the release so check fixes take effect.
 cp config/checks.yaml "$SHARED_DIR/config/checks.yaml"
+
+# Build the complete production environment before touching the running service.
+python3.12 -m venv "$RELEASE_DIR/.venv"
+PIP_DISABLE_PIP_VERSION_CHECK=1 "$RELEASE_DIR/.venv/bin/pip" install \
+  --retries 5 --timeout 60 "$RELEASE_DIR"
+"$RELEASE_DIR/.venv/bin/python" -c 'import app, uvicorn; print("Production virtualenv ready")'
 
 touch "$SHARED_DIR/.env"
 grep -Ev '^(APP_SECRET_KEY|ADMIN_INITIAL_PASSWORD|RUN_API_TOKEN|APP_VERSION|INSPECTOR_IMAGE|INSPECTOR_PORT|UBUNTU_SSH_USERNAME|UBUNTU_SSH_PASSWORD|CENTOS_SSH_USERNAME|CENTOS_SSH_PASSWORD|POSTGRES_HOST|POSTGRES_PORT|POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_DB|MYSQL_HOST|MYSQL_PORT|MYSQL_USER|MYSQL_PASSWORD|MYSQL_DB|JENKINS_URL|JENKINS_USERNAME|JENKINS_API_TOKEN|SMTP_HOST|SMTP_PORT|SMTP_USERNAME|SMTP_PASSWORD|SMTP_FROM|SMTP_TO|SMTP_USE_SSL)=' "$SHARED_DIR/.env" > "$SHARED_DIR/.env.next" || true
 {
   printf 'APP_SECRET_KEY=%s\n' "$C_APP_SECRET"; printf 'ADMIN_INITIAL_PASSWORD=%s\n' "$C_ADMIN_PASSWORD"; printf 'RUN_API_TOKEN=%s\n' "$C_RUN_TOKEN"
-  printf 'APP_VERSION=%s\nINSPECTOR_IMAGE=%s\nINSPECTOR_PORT=%s\n' "$GIT_SHORT_SHA" "$IMAGE_TAG" "$INTERNAL_PORT"
   printf 'UBUNTU_SSH_USERNAME=%s\nUBUNTU_SSH_PASSWORD=%s\n' "$C_UBUNTU_USER" "$C_UBUNTU_PASSWORD"
   printf 'CENTOS_SSH_USERNAME=%s\nCENTOS_SSH_PASSWORD=%s\n' "$C_CENTOS_USER" "$C_CENTOS_PASSWORD"
   printf 'POSTGRES_HOST=192.168.0.100\nPOSTGRES_PORT=15432\nPOSTGRES_USER=%s\nPOSTGRES_PASSWORD=%s\nPOSTGRES_DB=vnpy\n' "$C_POSTGRES_USER" "$C_POSTGRES_PASSWORD"
@@ -52,29 +68,62 @@ grep -Ev '^(APP_SECRET_KEY|ADMIN_INITIAL_PASSWORD|RUN_API_TOKEN|APP_VERSION|INSP
 mv "$SHARED_DIR/.env.next" "$SHARED_DIR/.env"
 chmod 600 "$SHARED_DIR/.env"
 
+if ! getent passwd "$SERVICE_USER" >/dev/null; then
+  sudo useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$SERVICE_USER"
+fi
+
+if [[ ! -f "$SHARED_DIR/data/password.txt" ]]; then
+  umask 077
+  printf '# username:password:role\nadmin:%s:admin\n' "$C_ADMIN_PASSWORD" > "$SHARED_DIR/data/password.txt"
+fi
+
+sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$SHARED_DIR/data" "$SHARED_DIR/logs"
 ln -s "$SHARED_DIR/data" "$RELEASE_DIR/data"
 ln -s "$SHARED_DIR/logs" "$RELEASE_DIR/logs"
 ln -s "$SHARED_DIR/config" "$RELEASE_DIR/config"
 ln -s "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
 printf '%s' "$GIT_COMMIT" > "$RELEASE_DIR/COMMIT"
-ln -sfn "$RELEASE_DIR" "$DEPLOY_ROOT/current"
+printf 'APP_VERSION=%s\n' "$GIT_SHORT_SHA" > "$RELEASE_DIR/version.env"
+
+sudo install -o root -g root -m 0644 deploy/personal-system-inspector.service \
+  "/etc/systemd/system/$SERVICE_NAME"
+sudo systemctl daemon-reload
+sudo systemctl enable "$SERVICE_NAME" >/dev/null
+
+# Cut over only after the release and virtualenv are complete.
 DEPLOYED=1
-cd "$RELEASE_DIR"
-docker compose -p personal-system-inspector up -d --remove-orphans
+if [[ $WAS_DOCKER_ACTIVE -eq 1 && -n "$PREVIOUS_RELEASE" && -f "$PREVIOUS_RELEASE/docker-compose.yml" ]]; then
+  (cd "$PREVIOUS_RELEASE" && docker compose -p personal-system-inspector down --remove-orphans)
+fi
+ln -sfn "$RELEASE_DIR" "$DEPLOY_ROOT/current"
+sudo systemctl restart "$SERVICE_NAME"
 
 attempts=0
-until curl --fail --silent --max-time 5 "http://127.0.0.1:$INTERNAL_PORT/health/live" >/dev/null && curl --fail --silent --max-time 5 "http://127.0.0.1:$INTERNAL_PORT/health/ready" >/dev/null; do
+until curl --fail --silent --max-time 5 "http://127.0.0.1:$INTERNAL_PORT/health/live" >/dev/null \
+  && curl --fail --silent --max-time 5 "http://127.0.0.1:$INTERNAL_PORT/health/ready" >/dev/null; do
   attempts=$((attempts + 1))
-  if [[ $attempts -ge 18 ]]; then docker compose -p personal-system-inspector logs --tail=120; exit 1; fi
+  if [[ $attempts -ge 18 ]]; then
+    sudo journalctl -u "$SERVICE_NAME" --no-pager -n 120 || true
+    exit 1
+  fi
   sleep 5
 done
 
-find "$DEPLOY_ROOT/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk 'NR>5 {$1=""; sub(/^ /,""); print}' | while IFS= read -r old_release; do
+# Keep the active release plus exactly two rollback releases.
+current_release="$(readlink -f "$DEPLOY_ROOT/current")"
+historical_kept=0
+while IFS= read -r old_release; do
   [[ -n "$old_release" ]] || continue
-  [[ "$(readlink -f "$DEPLOY_ROOT/current")" == "$(readlink -f "$old_release")" ]] || rm -rf -- "$old_release"
-done
-docker image prune -f --filter 'until=168h' >/dev/null
+  [[ "$(readlink -f "$old_release")" == "$current_release" ]] && continue
+  historical_kept=$((historical_kept + 1))
+  if [[ $historical_kept -gt $HISTORY_RELEASES_TO_KEEP ]]; then
+    case "$old_release" in
+      "$DEPLOY_ROOT"/releases/*) rm -rf -- "$old_release" ;;
+      *) echo "Refusing to remove unexpected path: $old_release" >&2; exit 1 ;;
+    esac
+  fi
+done < <(find "$DEPLOY_ROOT/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
 
 DEPLOYED=0
 trap - EXIT
-echo "Deployment healthy: release=$RELEASE_ID port=$INTERNAL_PORT"
+echo "Deployment healthy: release=$RELEASE_ID runtime=systemd-python port=$INTERNAL_PORT history=$HISTORY_RELEASES_TO_KEEP"
