@@ -54,7 +54,7 @@ pipeline {
                     sh '''
                         set +x
                         export SSHPASS="$C_UBUNTU_PASSWORD"
-                        tar --exclude=.git --exclude=.env --exclude=data --exclude=logs -czf - . | sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "target='$REMOTE_WORKSPACE'; case \"\$target\" in /tmp/personal-inspector-jenkins-*) ;; *) exit 90;; esac; rm -rf -- \"\$target\"; mkdir -p \"\$target\"; tar -xzf - -C \"\$target\""
+                        tar --exclude=.git --exclude=.env --exclude=data --exclude=logs -czf - . | sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "mkdir -p '$REMOTE_WORKSPACE' && tar -xzf - -C '$REMOTE_WORKSPACE'"
                     '''
                 }
             }
@@ -129,7 +129,7 @@ pipeline {
                 sh '''
                     set +x
                     export SSHPASS="$C_UBUNTU_PASSWORD"
-                    sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "target='${REMOTE_WORKSPACE:-}'; case \"\$target\" in /tmp/personal-inspector-jenkins-*) rm -rf -- \"\$target\" ;; esac; docker image rm '$APP_NAME-test:$BUILD_NUMBER' >/dev/null 2>&1 || true" || true
+                    sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "rm -rf -- '${REMOTE_WORKSPACE:-/tmp/personal-inspector-jenkins-$BUILD_NUMBER}'; docker image rm '$APP_NAME-test:$BUILD_NUMBER' >/dev/null 2>&1 || true" || true
                 '''
             }
             echo "Build ${env.BUILD_NUMBER}; commit ${env.GIT_COMMIT}; release ${env.RELEASE_ID}"
