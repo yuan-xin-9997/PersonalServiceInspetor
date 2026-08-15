@@ -11,7 +11,7 @@ defaults:
 
 checks:
   # 主机基础在线检查；SSH 凭据存在时会采集完整主机指标。
-  - {id: host-nas-tcp, name: NAS 在线, category: host, type: tcp, host: 192.168.0.100, port: 8090}
+  - {id: host-nas-tcp, name: NAS 在线, category: host, type: tcp, host: 192.168.0.100, port: 15432}
   - {id: host-ubuntu-ssh, name: Ubuntu 应用服务器, category: host, type: host_ssh, host: 192.168.0.111, port: 22, username_env: UBUNTU_SSH_USERNAME, password_env: UBUNTU_SSH_PASSWORD, key_path_env: UBUNTU_SSH_KEY_PATH}
   - {id: host-centos-ssh, name: CentOS 备用服务器, category: host, type: host_ssh, host: 192.168.0.110, port: 22, username_env: CENTOS_SSH_USERNAME, password_env: CENTOS_SSH_PASSWORD, key_path_env: CENTOS_SSH_KEY_PATH}
 
@@ -29,12 +29,12 @@ checks:
   - {id: svc-freshrss-internal, name: FreshRSS（内网）, category: service, type: http, url: 'http://192.168.0.100:11210', expected_status: [200, 302]}
   - {id: svc-vaultwarden-internal, name: Vaultwarden（内网）, category: service, type: http, url: 'http://192.168.0.100:18088', expected_status: [200]}
   - {id: svc-gitea-internal, name: Gitea（内网）, category: service, type: http, url: 'http://192.168.0.100:30000', expected_status: [200, 302]}
-  - {id: svc-persontracking-internal, name: 公开人物行程追踪（内网）, category: service, type: http, url: 'http://192.168.0.111:28000/health/live', expected_status: [200]}
+  - {id: svc-persontracking-internal, name: 公开人物行程追踪（内网）, category: service, type: http, url: 'http://192.168.0.111:28000/', expected_status: [200]}
   - {id: svc-trilium-internal, name: Trilium（内网）, category: service, type: http, url: 'http://192.168.0.100:28080', expected_status: [200, 302]}
   - {id: svc-seniorprofile-internal, name: 高级官员履历分析（内网）, category: service, type: http, url: 'http://192.168.0.111:33380/health/live', expected_status: [200]}
   - {id: svc-qinglong-internal, name: 青龙（内网）, category: service, type: http, url: 'http://192.168.0.100:5700', expected_status: [200, 302]}
   - {id: svc-infoanalysis-internal, name: 信息智能分析（内网）, category: service, type: http, url: 'http://192.168.0.111:28080/health/live', expected_status: [200]}
-  - {id: svc-bdpan-internal, name: 百度网盘链接管理（内网）, category: service, type: http, url: 'http://192.168.0.111:29080/health/live', expected_status: [200]}
+  - {id: svc-bdpan-internal, name: 百度网盘链接管理（内网）, category: service, type: http, url: 'http://192.168.0.111:29080/', expected_status: [200]}
   - {id: svc-translate-internal, name: 翻译服务（内网）, category: service, type: http, url: 'http://192.168.0.100:11880/health', expected_status: [200], json_assertions: [{path: status, equals: ok}]}
   - {id: svc-ocr-internal, name: OCR 服务（内网）, category: service, type: http, url: 'http://192.168.0.100:11980/health', expected_status: [200], json_assertions: [{path: status, equals: ok}]}
   - {id: svc-policy-internal, name: 政策分析（内网）, category: service, type: http, url: 'http://192.168.0.111:30080/health/live', expected_status: [200]}
@@ -54,12 +54,12 @@ checks:
   - {id: pub-rss, name: FreshRSS（公网）, category: service, type: http, url: 'https://rss.yuan-xin.top', expected_status: [200, 302]}
   - {id: pub-vault, name: Vaultwarden（公网）, category: service, type: http, url: 'https://vault.yuan-xin.top', expected_status: [200]}
   - {id: pub-gitea, name: Gitea（公网）, category: service, type: http, url: 'https://gitea.yuan-xin.top', expected_status: [200, 302]}
-  - {id: pub-persontracking, name: 公开人物行程追踪（公网）, category: service, type: http, url: 'https://persontracking.yuan-xin.top/health/live', expected_status: [200]}
+  - {id: pub-persontracking, name: 公开人物行程追踪（公网）, category: service, type: http, url: 'https://persontracking.yuan-xin.top/', expected_status: [200]}
   - {id: pub-trilium, name: Trilium（公网）, category: service, type: http, url: 'https://trilium.yuan-xin.top', expected_status: [200, 302]}
   - {id: pub-seniorprofile, name: 高级官员履历分析（公网）, category: service, type: http, url: 'https://seniorprofile.yuan-xin.top/health/live', expected_status: [200]}
   - {id: pub-qinglong, name: 青龙（公网）, category: service, type: http, url: 'https://qinglong.yuan-xin.top', expected_status: [200, 302]}
   - {id: pub-infoanalysis, name: 信息智能分析（公网）, category: service, type: http, url: 'https://infoanalysis.yuan-xin.top/health/live', expected_status: [200]}
-  - {id: pub-bdpan, name: 百度网盘链接管理（公网）, category: service, type: http, url: 'https://bdpan.yuan-xin.top/health/live', expected_status: [200]}
+  - {id: pub-bdpan, name: 百度网盘链接管理（公网）, category: service, type: http, url: 'https://bdpan.yuan-xin.top/', expected_status: [200]}
   - {id: pub-translate, name: 翻译服务（公网）, category: service, type: http, url: 'https://translate.yuan-xin.top/health', expected_status: [200]}
   - {id: pub-ocr, name: OCR 服务（公网）, category: service, type: http, url: 'https://ocr.yuan-xin.top/health', expected_status: [200]}
   - {id: pub-policy, name: 政策分析（公网）, category: service, type: http, url: 'https://policy.yuan-xin.top/health/live', expected_status: [200]}

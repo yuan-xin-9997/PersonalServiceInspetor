@@ -126,6 +126,8 @@ class InspectionEngine:
                     continue
 
                 state.consecutive_failures = 1 if previous_status in {"OK", "UNKNOWN"} else state.consecutive_failures + 1
+                item = by_id[result.check_id]
+                threshold = int(item.get("failure_threshold", threshold_default))
                 if state.active_incident_id:
                     incident = session.get(Incident, state.active_incident_id)
                     if incident:
@@ -134,10 +136,10 @@ class InspectionEngine:
                         incident.last_error = result.message
                         if result.status == "CRITICAL":
                             incident.severity = "CRITICAL"
+                            if state.consecutive_failures >= threshold and not incident.alert_sent_at:
+                                opened.append(incident.id)
                     continue
 
-                item = by_id[result.check_id]
-                threshold = int(item.get("failure_threshold", threshold_default))
                 should_open = result.status == "WARNING" or state.consecutive_failures >= threshold
                 # Critical checks are deliberately debounced; warning conditions open immediately.
                 if should_open:
@@ -204,6 +206,10 @@ class InspectionEngine:
             return
         for incident_id in opened:
             try:
+                with self.database.session() as session:
+                    incident = session.get(Incident, incident_id)
+                    if not incident or incident.severity != "CRITICAL" or incident.alert_sent_at:
+                        continue
                 sent = await self.notifier.send_incident(incident_id)
                 if sent:
                     self._mark_notification(incident_id, "alert")
@@ -211,6 +217,10 @@ class InspectionEngine:
                 logger.exception("incident notification failed id=%s", incident_id)
         for incident_id in recovered:
             try:
+                with self.database.session() as session:
+                    incident = session.get(Incident, incident_id)
+                    if not incident or incident.severity != "CRITICAL" or not incident.alert_sent_at or incident.recovery_sent_at:
+                        continue
                 sent = await self.notifier.send_recovery(incident_id)
                 if sent:
                     self._mark_notification(incident_id, "recovery")

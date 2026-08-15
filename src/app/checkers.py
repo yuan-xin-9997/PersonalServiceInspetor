@@ -170,7 +170,14 @@ class CheckRunner:
         timeout = float(item.get("timeout_seconds", self.defaults.get("timeout_seconds", 8)))
         verify = bool(item.get("verify_tls", True))
         headers = {str(k): str(v) for k, v in item.get("headers", {}).items()}
-        client = self._client or httpx.AsyncClient(timeout=timeout, verify=verify, follow_redirects=True)
+        # Inspection targets include private RFC1918 addresses.  A proxy inherited
+        # by the container must never turn those checks into proxy-generated 502s.
+        client = self._client or httpx.AsyncClient(
+            timeout=timeout,
+            verify=verify,
+            follow_redirects=True,
+            trust_env=False,
+        )
         close_client = self._client is None
         try:
             response = await client.request(str(item.get("method", "GET")), str(item["url"]), headers=headers)
@@ -274,7 +281,7 @@ class CheckRunner:
             client.close()
 
     async def check_host_ssh(self, item: dict[str, Any], started: float) -> CheckResult:
-        command = "LC_ALL=C; printf '__TOP__\\n'; top -bn1 | head -5; printf '__UPTIME__\\n'; uptime; printf '__MEMORY__\\n'; free -b; printf '__DISK__\\n'; df -P -x tmpfs -x devtmpfs; printf '__INODE__\\n'; df -Pi -x tmpfs -x devtmpfs; printf '__UPTIME_SECONDS__\\n'; cat /proc/uptime; printf '__JOURNAL__\\n'; journalctl --since '24 hours ago' -p 0..3 --no-pager -n 30 2>/dev/null || true"
+        command = "export LC_ALL=C; printf '__TOP__\\n'; top -bn1 | head -5; printf '__UPTIME__\\n'; uptime; printf '__MEMORY__\\n'; free -b; printf '__DISK__\\n'; df -P -x tmpfs -x devtmpfs -x iso9660 -x squashfs; printf '__INODE__\\n'; df -Pi -x tmpfs -x devtmpfs -x iso9660 -x squashfs; printf '__UPTIME_SECONDS__\\n'; cat /proc/uptime; printf '__JOURNAL__\\n'; journalctl --since '24 hours ago' -p 0..3 --no-pager -n 30 2>/dev/null || true"
         try:
             output, error, code = await asyncio.to_thread(self._ssh_exec, item, command, 524288)
         except MissingCredential as exc:
@@ -423,7 +430,7 @@ class CheckRunner:
         if not url or not username or not password:
             return self._result(item, "UNKNOWN", "缺少 Jenkins URL、用户名或 API Token 环境变量", started)
         query = "api/json?tree=jobs[name,color,lastBuild[number,result,timestamp,duration,building],lastSuccessfulBuild[timestamp]]"
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             response = await client.get(f"{str(url).rstrip('/')}/{query}", auth=(str(username), str(password)))
             response.raise_for_status()
             jobs = response.json().get("jobs", [])

@@ -33,7 +33,9 @@ trap cleanup_and_rollback EXIT
 mkdir -p "$RELEASE_DIR" "$SHARED_DIR/data/reports" "$SHARED_DIR/logs" "$SHARED_DIR/config"
 cp docker-compose.yml "$RELEASE_DIR/"
 [[ -f "$SHARED_DIR/config/app.json" ]] || cp config/app.json "$SHARED_DIR/config/app.json"
-[[ -f "$SHARED_DIR/config/checks.yaml" ]] || cp config/checks.yaml "$SHARED_DIR/config/checks.yaml"
+# app.json is operator-owned after first deployment; checks.yaml is versioned
+# application data and must follow the release so check fixes take effect.
+cp config/checks.yaml "$SHARED_DIR/config/checks.yaml"
 
 touch "$SHARED_DIR/.env"
 grep -Ev '^(APP_SECRET_KEY|ADMIN_INITIAL_PASSWORD|RUN_API_TOKEN|APP_VERSION|INSPECTOR_IMAGE|INSPECTOR_PORT|UBUNTU_SSH_USERNAME|UBUNTU_SSH_PASSWORD|CENTOS_SSH_USERNAME|CENTOS_SSH_PASSWORD|POSTGRES_HOST|POSTGRES_PORT|POSTGRES_USER|POSTGRES_PASSWORD|POSTGRES_DB|MYSQL_HOST|MYSQL_PORT|MYSQL_USER|MYSQL_PASSWORD|MYSQL_DB|JENKINS_URL|JENKINS_USERNAME|JENKINS_API_TOKEN|SMTP_HOST|SMTP_PORT|SMTP_USERNAME|SMTP_PASSWORD|SMTP_FROM|SMTP_TO|SMTP_USE_SSL)=' "$SHARED_DIR/.env" > "$SHARED_DIR/.env.next" || true

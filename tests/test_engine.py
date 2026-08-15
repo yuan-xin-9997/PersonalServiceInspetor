@@ -54,6 +54,20 @@ async def test_alert_debounce_dedup_and_recovery(settings_factory):
     assert incidents[0]["duration_seconds"] >= 0
 
 
+@pytest.mark.asyncio
+async def test_warning_is_recorded_without_immediate_or_recovery_email(settings_factory):
+    settings = settings_factory([{"id": "svc", "name": "服务", "category": "service", "type": "fake", "failure_threshold": 3}])
+    database = Database(settings.database_url)
+    database.create_all()
+    notifier = FakeNotifier()
+    engine = InspectionEngine(settings, database, runner=SequenceRunner(["WARNING", "OK"]), notifier=notifier)
+    await engine.run_all()
+    assert engine.incidents()[0]["severity"] == "WARNING"
+    await engine.run_all()
+    assert notifier.alerts == []
+    assert notifier.recoveries == []
+
+
 def test_database_stores_and_reads_states(settings_factory):
     settings = settings_factory()
     database = Database(settings.database_url)

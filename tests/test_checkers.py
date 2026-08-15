@@ -31,6 +31,36 @@ async def test_http_check_fails_status_and_json_assertion():
     assert "期望" in result.message
 
 
+@pytest.mark.asyncio
+async def test_http_check_ignores_inherited_proxy(monkeypatch):
+    captured: dict = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def request(self, *_args, **_kwargs):
+            return httpx.Response(200)
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    runner = CheckRunner({}, "Asia/Shanghai")
+    result = await runner.run(
+        {
+            "id": "private",
+            "name": "private",
+            "category": "service",
+            "type": "http",
+            "url": "http://192.168.0.100/health",
+            "expected_status": [200],
+        }
+    )
+    assert result.status == "OK"
+    assert captured["trust_env"] is False
+
+
 def test_json_assertion_supports_nested_fields_and_freshness():
     now = datetime.now(ZoneInfo("UTC")).isoformat()
     failures = evaluate_json_assertions({"data": {"state": "ready", "updated": now}}, [{"path": "data.state", "equals": "ready"}, {"path": "data.updated", "max_age_seconds": 60}])
