@@ -18,6 +18,7 @@ def test_systemd_runs_release_virtualenv_without_docker():
 
 def test_deployment_keeps_current_plus_two_historical_releases():
     script = (ROOT / "deploy" / "jenkins-deploy.sh").read_text(encoding="utf-8")
+    assert "docker" not in script.lower()
     assert "HISTORY_RELEASES_TO_KEEP=2" in script
     assert '== "$current_release"' in script
     assert "historical_kept -gt $HISTORY_RELEASES_TO_KEEP" in script

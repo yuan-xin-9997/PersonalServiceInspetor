@@ -17,12 +17,7 @@ rm -f -- "$SECRET_FILE"
 RELEASE_DIR="$DEPLOY_ROOT/releases/$RELEASE_ID"
 SHARED_DIR="$DEPLOY_ROOT/shared"
 PREVIOUS_RELEASE="$(readlink -f "$DEPLOY_ROOT/current" 2>/dev/null || true)"
-WAS_DOCKER_ACTIVE=0
 DEPLOYED=0
-
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq personal-system-inspector; then
-  WAS_DOCKER_ACTIVE=1
-fi
 
 cleanup_and_rollback() {
   exit_code=$?
@@ -31,12 +26,7 @@ cleanup_and_rollback() {
     echo "Deployment failed; rolling back to $PREVIOUS_RELEASE"
     sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
     ln -sfn "$PREVIOUS_RELEASE" "$DEPLOY_ROOT/current"
-    if [[ $WAS_DOCKER_ACTIVE -eq 1 && -f "$PREVIOUS_RELEASE/docker-compose.yml" ]]; then
-      sudo systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
-      (cd "$PREVIOUS_RELEASE" && docker compose -p personal-system-inspector up -d --remove-orphans)
-    else
-      sudo systemctl restart "$SERVICE_NAME"
-    fi
+    sudo systemctl restart "$SERVICE_NAME"
     curl --fail --silent --retry 12 --retry-delay 5 "http://127.0.0.1:$INTERNAL_PORT/health/ready" >/dev/null
   fi
   exit "$exit_code"
@@ -92,9 +82,6 @@ sudo systemctl enable "$SERVICE_NAME" >/dev/null
 
 # Cut over only after the release and virtualenv are complete.
 DEPLOYED=1
-if [[ $WAS_DOCKER_ACTIVE -eq 1 && -n "$PREVIOUS_RELEASE" && -f "$PREVIOUS_RELEASE/docker-compose.yml" ]]; then
-  (cd "$PREVIOUS_RELEASE" && docker compose -p personal-system-inspector down --remove-orphans)
-fi
 ln -sfn "$RELEASE_DIR" "$DEPLOY_ROOT/current"
 sudo systemctl restart "$SERVICE_NAME"
 
