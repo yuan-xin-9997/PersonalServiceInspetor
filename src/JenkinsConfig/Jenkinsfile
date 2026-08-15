@@ -32,6 +32,7 @@ pipeline {
                     string(credentialsId: 'personal-inspector-app-secret', variable: 'C_APP_SECRET'),
                     string(credentialsId: 'personal-inspector-admin-password', variable: 'C_ADMIN_PASSWORD'),
                     string(credentialsId: 'personal-inspector-run-token', variable: 'C_RUN_TOKEN'),
+                    string(credentialsId: 'personal-inspector-smtp-env', variable: 'C_SMTP_ENV_B64'),
                     usernamePassword(credentialsId: 'personal-inspector-ubuntu-ssh', usernameVariable: 'C_UBUNTU_USER', passwordVariable: 'C_UBUNTU_PASSWORD'),
                     usernamePassword(credentialsId: 'personal-inspector-centos-ssh', usernameVariable: 'C_CENTOS_USER', passwordVariable: 'C_CENTOS_PASSWORD'),
                     usernamePassword(credentialsId: 'personal-inspector-postgres', usernameVariable: 'C_POSTGRES_USER', passwordVariable: 'C_POSTGRES_PASSWORD'),
@@ -40,7 +41,7 @@ pipeline {
                 ]) {
                     sh '''
                         set +x
-                        for value in "$C_APP_SECRET" "$C_ADMIN_PASSWORD" "$C_RUN_TOKEN" "$C_UBUNTU_USER" "$C_UBUNTU_PASSWORD" "$C_CENTOS_USER" "$C_CENTOS_PASSWORD" "$C_POSTGRES_USER" "$C_POSTGRES_PASSWORD" "$C_MYSQL_USER" "$C_MYSQL_PASSWORD" "$C_JENKINS_USER" "$C_JENKINS_TOKEN"; do test -n "$value"; done
+                        for value in "$C_APP_SECRET" "$C_ADMIN_PASSWORD" "$C_RUN_TOKEN" "$C_SMTP_ENV_B64" "$C_UBUNTU_USER" "$C_UBUNTU_PASSWORD" "$C_CENTOS_USER" "$C_CENTOS_PASSWORD" "$C_POSTGRES_USER" "$C_POSTGRES_PASSWORD" "$C_MYSQL_USER" "$C_MYSQL_PASSWORD" "$C_JENKINS_USER" "$C_JENKINS_TOKEN"; do test -n "$value"; done
                         command -v sshpass >/dev/null
                         echo 'Required credentials and SSH transport are available (values hidden).'
                     '''
@@ -97,6 +98,7 @@ pipeline {
                     string(credentialsId: 'personal-inspector-app-secret', variable: 'C_APP_SECRET'),
                     string(credentialsId: 'personal-inspector-admin-password', variable: 'C_ADMIN_PASSWORD'),
                     string(credentialsId: 'personal-inspector-run-token', variable: 'C_RUN_TOKEN'),
+                    string(credentialsId: 'personal-inspector-smtp-env', variable: 'C_SMTP_ENV_B64'),
                     usernamePassword(credentialsId: 'personal-inspector-ubuntu-ssh', usernameVariable: 'C_UBUNTU_USER', passwordVariable: 'C_UBUNTU_PASSWORD'),
                     usernamePassword(credentialsId: 'personal-inspector-centos-ssh', usernameVariable: 'C_CENTOS_USER', passwordVariable: 'C_CENTOS_PASSWORD'),
                     usernamePassword(credentialsId: 'personal-inspector-postgres', usernameVariable: 'C_POSTGRES_USER', passwordVariable: 'C_POSTGRES_PASSWORD'),
@@ -107,7 +109,7 @@ pipeline {
                         set +x
                         export SSHPASS="$C_UBUNTU_PASSWORD"
                         {
-                            printf 'C_APP_SECRET=%s\n' "$C_APP_SECRET"; printf 'C_ADMIN_PASSWORD=%s\n' "$C_ADMIN_PASSWORD"; printf 'C_RUN_TOKEN=%s\n' "$C_RUN_TOKEN"
+                            printf 'C_APP_SECRET=%s\n' "$C_APP_SECRET"; printf 'C_ADMIN_PASSWORD=%s\n' "$C_ADMIN_PASSWORD"; printf 'C_RUN_TOKEN=%s\n' "$C_RUN_TOKEN"; printf 'C_SMTP_ENV_B64=%s\n' "$C_SMTP_ENV_B64"
                             printf 'C_UBUNTU_USER=%s\n' "$C_UBUNTU_USER"; printf 'C_UBUNTU_PASSWORD=%s\n' "$C_UBUNTU_PASSWORD"
                             printf 'C_CENTOS_USER=%s\n' "$C_CENTOS_USER"; printf 'C_CENTOS_PASSWORD=%s\n' "$C_CENTOS_PASSWORD"
                             printf 'C_POSTGRES_USER=%s\n' "$C_POSTGRES_USER"; printf 'C_POSTGRES_PASSWORD=%s\n' "$C_POSTGRES_PASSWORD"
