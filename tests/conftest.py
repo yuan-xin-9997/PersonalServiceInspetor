@@ -23,6 +23,7 @@ def settings_factory(tmp_path: Path):
             "app": {"name": "测试巡检", "version": "test", "timezone": "Asia/Shanghai"},
             "storage": {"database_url": f"sqlite:///{(data_dir / 'test.sqlite3').as_posix()}", "report_directory": str(data_dir / "reports")},
             "scheduler": {"enabled": False, "run_on_startup": False, **scheduler_overrides},
+            "email": {"send_incident_notifications": False},
             "security": {"password_file": str(password_file), "session_max_age_seconds": 3600},
             "logging": {"path": str(tmp_path / "logs" / "app.log"), "backup_count": 2},
         }

@@ -38,7 +38,7 @@ class InspectionScheduler:
         self.scheduler.add_job(
             self.mailer.send_daily,
             CronTrigger(
-                hour=int(self.settings.scheduler.get("daily_report_hour", 8)),
+                hour=int(self.settings.scheduler.get("daily_report_hour", 9)),
                 minute=int(self.settings.scheduler.get("daily_report_minute", 0)),
                 timezone=self.settings.timezone,
             ),

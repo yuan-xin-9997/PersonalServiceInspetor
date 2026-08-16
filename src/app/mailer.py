@@ -32,6 +32,10 @@ class Mailer:
     def configured(self) -> bool:
         return all(os.getenv(name) for name in ("SMTP_HOST", "SMTP_FROM", "SMTP_TO"))
 
+    @property
+    def incident_notifications_enabled(self) -> bool:
+        return bool(self.settings.email.get("send_incident_notifications", False))
+
     def bind_engine(self, engine: Any) -> None:
         self.engine = engine
 
@@ -73,6 +77,9 @@ class Mailer:
             raise
 
     async def send_incident(self, incident_id: int) -> bool:
+        if not self.incident_notifications_enabled:
+            logger.info("incident email disabled by configuration id=%s", incident_id)
+            return False
         incident = self._incident(incident_id)
         if not incident or incident.alert_sent_at:
             return False
@@ -86,6 +93,9 @@ class Mailer:
         return True
 
     async def send_recovery(self, incident_id: int) -> bool:
+        if not self.incident_notifications_enabled:
+            logger.info("recovery email disabled by configuration id=%s", incident_id)
+            return False
         incident = self._incident(incident_id)
         if not incident or incident.recovery_sent_at:
             return False

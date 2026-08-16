@@ -19,6 +19,7 @@ class Settings:
     app: dict[str, Any]
     storage: dict[str, Any]
     scheduler: dict[str, Any]
+    email: dict[str, Any]
     security: dict[str, Any]
     logging: dict[str, Any]
     defaults: dict[str, Any]
@@ -44,6 +45,7 @@ class Settings:
             "app": self.app,
             "storage": {"database_url": self.storage.get("database_url", "").split("?")[0]},
             "scheduler": self.scheduler,
+            "email": self.email,
             "defaults": self.defaults,
             "checks": [
                 {
@@ -88,6 +90,7 @@ def load_settings(
         app=app_data.get("app", {}),
         storage=app_data.get("storage", {}),
         scheduler=app_data.get("scheduler", {}),
+        email=app_data.get("email", {}),
         security=app_data.get("security", {}),
         logging=app_data.get("logging", {}),
         defaults=checks_data.get("defaults", {}),

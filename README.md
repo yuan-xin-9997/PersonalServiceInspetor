@@ -1,13 +1,13 @@
 # Personal System Inspector
 
-个人系统统一巡检中心，用一个轻量 Web 应用持续检查个人主机、内外网服务、API、Docker、PostgreSQL、MySQL、日志和 Jenkins。系统保存历史状态，连续失败达到阈值后发送一次告警，恢复后发送一次恢复通知，并在北京时间每日 08:00 生成 HTML 日报。
+个人系统统一巡检中心，用一个轻量 Web 应用持续检查个人主机、内外网服务、API、Docker、PostgreSQL、MySQL、日志和 Jenkins。系统保存历史状态，连续失败达到阈值后记录事件，并在北京时间每日 09:00 发送 HTML 日报。
 
 ## 架构
 
 ```text
 APScheduler -> InspectionEngine -> TCP / HTTP / TLS / SSH / DB / Jenkins 检查器
                               -> SQLite 历史、状态、事件、任务
-                              -> SMTP 告警、恢复通知、HTML 日报
+                              -> SMTP HTML 日报
 FastAPI + Vue 管理页面 ---------^
 ```
 
@@ -67,13 +67,13 @@ pytest -q
 
 所有环境变量名称见 `.env.example`。生产环境变量由 Jenkins Credentials 注入，不应写进配置、镜像、日志、邮件或前端。
 
-## 日报和即时告警
+## 日报和通知策略
 
 - 周期巡检默认每 15 分钟执行。
-- HTML 日报默认北京时间每日 08:00 执行。
+- HTML 日报默认北京时间每日 09:00 执行。
 - CRITICAL 默认连续失败 3 次才开启事件；同一事件不重复通知。
 - WARNING 立即形成可见事件并进入日报，但不发送即时邮件。
-- CRITICAL 连续达到阈值后仅发送一次即时告警；已发告警的事件恢复后仅发送一次恢复通知。
+- 故障和恢复的即时邮件默认关闭，避免 09:00 以外发送任何报告类邮件；如需启用，可在 `config/app.json` 的 `email.send_incident_notifications` 中显式配置。
 - 未配置 SMTP 时，日报写入 `data/reports/`，邮件测试接口返回 `preview` 模式。
 
 管理员可打开 `/api/email/preview` 预览日报，或调用 `POST /api/email/test` 发送测试邮件。

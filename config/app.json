@@ -14,9 +14,12 @@
   "scheduler": {
     "enabled": true,
     "inspection_interval_minutes": 15,
-    "daily_report_hour": 8,
+    "daily_report_hour": 9,
     "daily_report_minute": 0,
     "run_on_startup": true
+  },
+  "email": {
+    "send_incident_notifications": false
   },
   "security": {
     "password_file": "./data/password.txt",
