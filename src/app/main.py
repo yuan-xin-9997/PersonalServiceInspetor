@@ -22,29 +22,50 @@ from .engine import InspectionEngine
 from .mailer import Mailer
 from .scheduler import InspectionScheduler
 from .security import UserStore, app_secret
+from .settings_store import SettingsStore
 
 logger = logging.getLogger(__name__)
 PACKAGE_DIRECTORY = Path(__file__).parent
 templates = Jinja2Templates(directory=PACKAGE_DIRECTORY / "templates")
+
+PAGES_CATALOG = [
+    {"id": "dashboard", "label": "仪表盘", "group": ""},
+    {"id": "inspection", "label": "巡检管理", "group": ""},
+    {"id": "hosts", "label": "主机", "group": "巡检管理"},
+    {"id": "services", "label": "服务和接口", "group": "巡检管理"},
+    {"id": "docker", "label": "Docker", "group": "巡检管理"},
+    {"id": "databases", "label": "数据库", "group": "巡检管理"},
+    {"id": "logs", "label": "日志", "group": "巡检管理"},
+    {"id": "jenkins", "label": "Jenkins 和定时任务", "group": "巡检管理"},
+    {"id": "history", "label": "历史记录", "group": ""},
+    {"id": "tasks", "label": "任务中心", "group": ""},
+    {"id": "config", "label": "系统配置", "group": ""},
+    {"id": "users", "label": "权限管理", "group": ""},
+]
 
 
 class Runtime:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.database = Database(settings.database_url)
+        self.store = SettingsStore(self.database, settings)
         self.runner = CheckRunner(settings.defaults, settings.timezone)
         self.mailer = Mailer(settings, self.database)
-        self.engine = InspectionEngine(settings, self.database, self.runner, self.mailer)
+        self.engine = InspectionEngine(settings, self.database, self.runner, self.mailer, store=self.store)
         self.mailer.bind_engine(self.engine)
-        self.scheduler = InspectionScheduler(settings, self.engine, self.mailer)
+        self.scheduler = InspectionScheduler(settings, self.engine, self.mailer, store=self.store)
         self.users = UserStore(settings.security.get("password_file", "./data/password.txt"), self.database, settings.timezone)
         self.startup_task: asyncio.Task | None = None
+
+    def apply_runtime_settings(self) -> None:
+        self.runner.defaults = self.store.effective_defaults()
 
     async def start(self) -> None:
         self.database.create_all()
         self.users.sync_permissions()
+        self.apply_runtime_settings()
         self.scheduler.start()
-        if self.settings.scheduler.get("run_on_startup", True):
+        if self.store.schedule().get("run_on_startup", True):
             self.startup_task = asyncio.create_task(self.engine.run_all(trigger="startup"))
 
     async def stop(self) -> None:
@@ -80,9 +101,10 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
     async def lifespan(_: FastAPI):
         runtime.database.create_all()
         runtime.users.sync_permissions()
+        runtime.apply_runtime_settings()
         if start_scheduler:
             runtime.scheduler.start()
-            if config.scheduler.get("run_on_startup", True):
+            if runtime.store.schedule().get("run_on_startup", True):
                 runtime.startup_task = asyncio.create_task(runtime.engine.run_all(trigger="startup"))
         yield
         await runtime.stop()
@@ -164,7 +186,13 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         return templates.TemplateResponse(
             request,
             "dashboard.html",
-            {"user": user, "version": config.version, "pages": pages, "app_name": config.app.get("name")},
+            {
+                "user": user,
+                "version": config.version,
+                "pages": pages,
+                "pages_catalog": PAGES_CATALOG,
+                "app_name": config.app.get("name"),
+            },
         )
 
     @application.get("/api/summary")
@@ -187,13 +215,83 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
     async def api_run(_: dict[str, str] = Depends(run_authorized)) -> dict[str, Any]:
         return await runtime.engine.run_all(trigger="api")
 
+    @application.get("/api/inspection")
+    async def api_inspection(_: dict[str, str] = Depends(current_user)) -> dict[str, Any]:
+        summary = runtime.engine.summary()
+        return {
+            "schedule": runtime.store.schedule(),
+            "limits": runtime.store.limits(),
+            "categories": summary["categories"],
+            "checks": summary["states"],
+            "jobs": runtime.scheduler.jobs(),
+        }
+
+    @application.put("/api/inspection/checks")
+    async def api_update_checks(request: Request, _: dict[str, str] = Depends(admin_user)) -> dict[str, Any]:
+        body = await request.json()
+        check_ids = body.get("ids")
+        enabled = body.get("enabled")
+        if (
+            not isinstance(check_ids, list)
+            or not check_ids
+            or not all(isinstance(value, str) for value in check_ids)
+        ):
+            raise HTTPException(status_code=422, detail="ids 必须是非空字符串列表")
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=422, detail="enabled 必须是布尔值")
+        try:
+            runtime.store.set_checks_enabled(check_ids, enabled)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"巡检项不存在: {exc}") from exc
+        closed = 0
+        if not enabled:
+            for check_id in check_ids:
+                closed += runtime.engine.close_open_incidents(check_id)
+        return {"ids": check_ids, "enabled": enabled, "closed_incidents": closed}
+
+    @application.put("/api/inspection/checks/{check_id}")
+    async def api_update_check(check_id: str, request: Request, _: dict[str, str] = Depends(admin_user)) -> dict[str, Any]:
+        body = await request.json()
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=422, detail="enabled 必须是布尔值")
+        try:
+            runtime.store.set_check_enabled(check_id, enabled)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="巡检项不存在") from exc
+        closed = 0 if enabled else runtime.engine.close_open_incidents(check_id)
+        return {"check_id": check_id, "enabled": enabled, "closed_incidents": closed}
+
+    @application.put("/api/inspection/schedule")
+    async def api_update_schedule(request: Request, _: dict[str, str] = Depends(admin_user)) -> dict[str, Any]:
+        try:
+            schedule = runtime.store.update_schedule(await request.json())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        runtime.scheduler.reload()
+        return {"schedule": schedule, "jobs": runtime.scheduler.jobs()}
+
+    @application.put("/api/inspection/limits")
+    async def api_update_limits(request: Request, _: dict[str, str] = Depends(admin_user)) -> dict[str, Any]:
+        try:
+            limits = runtime.store.update_limits(await request.json())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        runtime.apply_runtime_settings()
+        return {"limits": limits}
+
     @application.get("/api/tasks")
     async def api_tasks(_: dict[str, str] = Depends(current_user)) -> dict[str, Any]:
         return {"scheduled": runtime.scheduler.jobs(), "history": runtime.engine.tasks()}
 
     @application.get("/api/config")
     async def api_config(_: dict[str, str] = Depends(admin_user)) -> dict[str, Any]:
-        return config.public_view()
+        value = config.public_view()
+        value["runtime"] = {
+            "schedule": runtime.store.schedule(),
+            "limits": runtime.store.limits(),
+        }
+        return value
 
     @application.get("/api/users")
     async def api_users(_: dict[str, str] = Depends(admin_user)) -> list[dict[str, Any]]:

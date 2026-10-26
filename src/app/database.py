@@ -4,7 +4,17 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+)
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -87,6 +97,26 @@ class UserPermission(Base):
     username: Mapped[str] = mapped_column(String(100), primary_key=True)
     role: Mapped[str] = mapped_column(String(20), default="user")
     pages: Mapped[list] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class InspectionSetting(Base):
+    """Runtime overrides for scheduling and inspection thresholds."""
+
+    __tablename__ = "inspection_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CheckSetting(Base):
+    """Per-check enable/disable switches kept outside the versioned YAML file."""
+
+    __tablename__ = "check_settings"
+
+    check_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

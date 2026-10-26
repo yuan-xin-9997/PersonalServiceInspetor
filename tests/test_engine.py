@@ -73,4 +73,7 @@ def test_database_stores_and_reads_states(settings_factory):
     database = Database(settings.database_url)
     database.create_all()
     assert database.ready()
-    assert InspectionEngine(settings, database).summary()["total"] == 0
+    summary = InspectionEngine(settings, database).summary()
+    assert summary["total"] == 1
+    assert summary["counts"]["UNKNOWN"] == 1
+    assert summary["states"][0]["message"] == "尚未巡检"

@@ -14,8 +14,19 @@ from .checkers import CheckRunner
 from .config import Settings
 from .database import CheckResultRecord, CheckState, Database, Incident, TaskRun
 from .schemas import CheckResult
+from .settings_store import SettingsStore
 
 logger = logging.getLogger(__name__)
+
+CATEGORY_ORDER = ("host", "service", "docker", "database", "log", "jenkins")
+CATEGORY_LABELS = {
+    "host": "主机",
+    "service": "服务和接口",
+    "docker": "Docker",
+    "database": "数据库",
+    "log": "日志",
+    "jenkins": "Jenkins 和定时任务",
+}
 
 
 class NotificationSink(Protocol):
@@ -31,12 +42,20 @@ class InspectionEngine:
         database: Database,
         runner: CheckRunner | None = None,
         notifier: NotificationSink | None = None,
+        store: SettingsStore | None = None,
     ):
         self.settings = settings
         self.database = database
         self.runner = runner or CheckRunner(settings.defaults, settings.timezone)
         self.notifier = notifier
+        self.store = store
         self._lock = asyncio.Lock()
+
+    def active_checks(self) -> list[dict[str, Any]]:
+        return self.store.enabled_checks() if self.store else self.settings.checks
+
+    def _effective_defaults(self) -> dict[str, Any]:
+        return self.store.effective_defaults() if self.store else self.settings.defaults
 
     async def run_all(self, trigger: str = "manual") -> dict[str, Any]:
         if self._lock.locked():
@@ -45,9 +64,22 @@ class InspectionEngine:
             run_id = uuid.uuid4().hex
             started_at = self._now()
             task_db_id = self._start_task(run_id, trigger, started_at)
-            logger.info("inspection started run_id=%s trigger=%s", run_id, trigger)
+            checks = self.active_checks()
+            logger.info("inspection started run_id=%s trigger=%s checks=%s", run_id, trigger, len(checks))
             try:
-                results = await asyncio.gather(*(self.runner.run(item) for item in self.settings.checks))
+                if not checks:
+                    self._finish_task(task_db_id, "SUCCESS", "没有启用的巡检项", 0)
+                    return {
+                        "status": "SUCCESS",
+                        "run_id": run_id,
+                        "started_at": started_at.isoformat(),
+                        "finished_at": self._now().isoformat(),
+                        "counts": {"OK": 0, "WARNING": 0, "CRITICAL": 0, "UNKNOWN": 0},
+                        "opened_incidents": [],
+                        "recovered_incidents": [],
+                        "message": "没有启用的巡检项",
+                    }
+                results = await asyncio.gather(*(self.runner.run(item) for item in checks))
                 opened, recovered = self._persist(run_id, results)
                 await self._notify(opened, recovered)
                 counts = Counter(result.status for result in results)
@@ -69,10 +101,14 @@ class InspectionEngine:
     def _persist(self, run_id: str, results: list[CheckResult]) -> tuple[list[int], list[int]]:
         opened: list[int] = []
         recovered: list[int] = []
-        threshold_default = int(self.settings.defaults.get("failure_threshold", 3))
+        threshold_default = int(self._effective_defaults().get("failure_threshold", 3))
         by_id = {item["id"]: item for item in self.settings.checks}
+        still_enabled = self.store.enabled_map() if self.store else {}
         with self.database.session() as session:
             for result in results:
+                if self.store and not still_enabled.get(result.check_id, True):
+                    # The operator disabled this check while the run was in flight.
+                    continue
                 self._enrich_historical_metrics(session, result)
                 session.add(
                     CheckResultRecord(
@@ -238,24 +274,105 @@ class InspectionEngine:
                 incident.recovery_sent_at = self._now()
 
     def summary(self) -> dict[str, Any]:
+        configured = (
+            self.store.configured_checks()
+            if self.store
+            else [{**item, "enabled": True} for item in self.settings.checks]
+        )
         with self.database.session() as session:
-            states = list(session.scalars(select(CheckState).order_by(CheckState.category, CheckState.name)))
+            state_rows = {row.check_id: row for row in session.scalars(select(CheckState))}
             latest_task = session.scalar(select(TaskRun).where(TaskRun.task_id.like("inspection:%")).order_by(desc(TaskRun.started_at)).limit(1))
             report_task = session.scalar(select(TaskRun).where(TaskRun.task_id.like("daily-report:%")).order_by(desc(TaskRun.started_at)).limit(1))
             open_incidents = list(session.scalars(select(Incident).where(Incident.status == "OPEN").order_by(desc(Incident.opened_at))))
             recently_recovered = list(session.scalars(select(Incident).where(Incident.status == "RECOVERED").order_by(desc(Incident.recovered_at)).limit(20)))
-        counts = Counter(state.current_status for state in states)
-        overall = "CRITICAL" if counts["CRITICAL"] else "WARNING" if counts["WARNING"] or counts["UNKNOWN"] else "OK"
+
+        states: list[dict[str, Any]] = []
+        for check in configured:
+            state = state_rows.get(check["id"])
+            states.append(
+                {
+                    "check_id": check["id"],
+                    "name": check["name"],
+                    "category": check["category"],
+                    "type": check["type"],
+                    "enabled": bool(check.get("enabled", True)),
+                    "status": state.current_status if state else "UNKNOWN",
+                    "consecutive_failures": state.consecutive_failures if state else 0,
+                    "message": state.last_message if state else "尚未巡检",
+                    "latency_ms": state.last_latency_ms if state else None,
+                    "last_checked_at": self._iso(state.last_checked_at) if state else None,
+                    "last_success_at": self._iso(state.last_success_at) if state else None,
+                }
+            )
+
+        enabled_states = [item for item in states if item["enabled"]]
+        enabled_ids = {item["check_id"] for item in enabled_states}
+        counts = Counter(item["status"] for item in enabled_states)
+        total = len(enabled_states)
+        if not total:
+            overall = "UNKNOWN"
+        else:
+            overall = "CRITICAL" if counts["CRITICAL"] else "WARNING" if counts["WARNING"] or counts["UNKNOWN"] else "OK"
         return {
             "overall_status": overall,
             "counts": {key: counts.get(key, 0) for key in ("OK", "WARNING", "CRITICAL", "UNKNOWN")},
-            "total": len(states),
+            "total": total,
+            "configured_total": len(states),
+            "disabled": len(states) - total,
+            "categories": self._category_summary(states),
             "last_inspection": self._task_dict(latest_task),
             "last_daily_report": self._task_dict(report_task),
-            "open_incidents": [self._incident_dict(value) for value in open_incidents],
-            "recovered_incidents": [self._incident_dict(value) for value in recently_recovered],
-            "states": [self._state_dict(value) for value in states],
+            "open_incidents": [
+                self._incident_dict(value)
+                for value in open_incidents
+                if value.check_id in enabled_ids
+            ],
+            "recovered_incidents": [
+                self._incident_dict(value)
+                for value in recently_recovered
+                if value.check_id in enabled_ids
+            ],
+            "states": states,
         }
+
+    def _category_summary(self, states: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        categories = list(CATEGORY_ORDER)
+        categories.extend(sorted({item["category"] for item in states} - set(categories)))
+        result: list[dict[str, Any]] = []
+        for category in categories:
+            items = [item for item in states if item["category"] == category]
+            if not items:
+                continue
+            enabled_items = [item for item in items if item["enabled"]]
+            counts = Counter(item["status"] for item in enabled_items)
+            result.append(
+                {
+                    "id": category,
+                    "label": CATEGORY_LABELS.get(category, category),
+                    "total": len(enabled_items),
+                    "configured": len(items),
+                    "disabled": len(items) - len(enabled_items),
+                    "counts": {key: counts.get(key, 0) for key in ("OK", "WARNING", "CRITICAL", "UNKNOWN")},
+                }
+            )
+        return result
+
+    def close_open_incidents(self, check_id: str) -> int:
+        """Close open incidents when an operator disables a check."""
+        now = self._now()
+        closed = 0
+        with self.database.session() as session:
+            values = list(session.scalars(select(Incident).where(Incident.check_id == check_id, Incident.status == "OPEN")))
+            for incident in values:
+                incident.status = "CLOSED"
+                incident.recovered_at = now
+                incident.last_seen_at = now
+                closed += 1
+            state = session.get(CheckState, check_id)
+            if state:
+                state.active_incident_id = None
+                state.consecutive_failures = 0
+        return closed
 
     def checks(self, category: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
         with self.database.session() as session:

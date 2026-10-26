@@ -1,38 +1,705 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ app_name }}</title><link rel="stylesheet" href="/static/app.css"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ app_name }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
 <body>
 {% raw %}
 <div id="app" class="layout">
   <aside class="sidebar">
-    <div class="brand">统一巡检中心</div>
+    <div class="brand"><span>统一巡检中心</span><small>INSPECTOR</small></div>
     <nav class="nav">
-      <button v-for="item in navigation" :key="item.id" :class="{active: view===item.id}" @click="select(item.id)">{{ item.label }}</button>
+      <template v-for="item in navigation" :key="item.id">
+        <button v-if="!item.children" :class="{active: view===item.id}" @click="select(item.id)">{{ item.label }}</button>
+        <div v-else class="nav-group">
+          <button class="nav-group-title" :class="{active: view===item.page || item.children.some(c=>view===c.id)}" @click="openGroup(item)">
+            <span>{{ item.label }}</span>
+            <span class="chevron" @click.stop="expanded[item.id]=!expanded[item.id]">{{ expanded[item.id] ? '▾' : '▸' }}</span>
+          </button>
+          <div v-show="expanded[item.id]" class="nav-children">
+            <button v-for="child in item.children" :key="child.id" :class="{active: view===child.id}" @click="select(child.id)">{{ child.label }}</button>
+          </div>
+        </div>
+      </template>
     </nav>
-    <div class="account"><div>当前用户：{{ bootstrap.user.username }}</div><div>角色：{{ bootstrap.user.role }}</div><div>版本：{{ bootstrap.version }}</div><form method="post" action="/logout"><button>退出登录</button></form></div>
+    <div class="account">
+      <div class="account-user">{{ bootstrap.user.username }}</div>
+      <div class="account-meta">角色：{{ roleLabel }} · 版本：{{ bootstrap.version }}</div>
+      <form method="post" action="/logout"><button>退出登录</button></form>
+    </div>
   </aside>
+
   <main class="main">
-    <div class="topbar"><div><h1>{{ currentTitle }}</h1><div class="muted">最近巡检：{{ formatTime(summary.last_inspection?.finished_at || summary.last_inspection?.started_at) }}</div></div><div class="actions"><button class="secondary" @click="loadAll">刷新</button><button v-if="bootstrap.user.role==='admin'" class="primary" @click="runInspection" :disabled="running">{{ running ? '巡检中…' : '立即巡检' }}</button></div></div>
+    <header class="topbar">
+      <div>
+        <h1>{{ currentTitle }}</h1>
+        <div class="muted">
+          最近巡检：{{ formatTime(summary.last_inspection?.finished_at || summary.last_inspection?.started_at) }}
+          <span v-if="summary.last_inspection"> · {{ summary.last_inspection.detail }}</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="secondary" @click="loadAll(false)" :disabled="loading">{{ loading ? '刷新中…' : '刷新' }}</button>
+        <button v-if="isAdmin" class="primary" @click="runInspection" :disabled="running">{{ running ? '巡检中…' : '立即巡检' }}</button>
+      </div>
+    </header>
+
     <template v-if="view==='dashboard'">
-      <section class="cards"><div class="card"><div class="muted">总体状态</div><div class="value"><span :class="['status',summary.overall_status]">{{ summary.overall_status || 'UNKNOWN' }}</span></div></div><div class="card"><div class="muted">检查项</div><div class="value">{{ summary.total || 0 }}</div></div><div class="card"><div class="muted">正常</div><div class="value">{{ summary.counts?.OK || 0 }}</div></div><div class="card"><div class="muted">警告</div><div class="value">{{ summary.counts?.WARNING || 0 }}</div></div><div class="card"><div class="muted">严重 / 未知</div><div class="value">{{ (summary.counts?.CRITICAL || 0) + (summary.counts?.UNKNOWN || 0) }}</div></div></section>
+      <section class="cards">
+        <div class="card" :class="'accent-'+String(summary.overall_status || '').toLowerCase()">
+          <div class="muted">总体状态</div>
+          <div class="value"><span :class="['status', summary.overall_status || 'UNKNOWN']">{{ summary.overall_status || 'UNKNOWN' }}</span></div>
+        </div>
+        <div class="card"><div class="muted">启用巡检项</div><div class="value">{{ summary.total || 0 }}</div><small class="muted">共配置 {{ summary.configured_total || 0 }} 项</small></div>
+        <div class="card"><div class="muted">正常</div><div class="value ok">{{ summary.counts?.OK || 0 }}</div></div>
+        <div class="card"><div class="muted">警告 / 严重</div><div class="value warn">{{ (summary.counts?.WARNING || 0) + (summary.counts?.CRITICAL || 0) }}</div></div>
+        <div class="card"><div class="muted">未知 / 已停用</div><div class="value muted-value">{{ (summary.counts?.UNKNOWN || 0) + (summary.disabled || 0) }}</div></div>
+      </section>
+
+      <section class="chart-grid">
+        <div class="panel chart-card">
+          <div class="panel-head"><h2>状态分布</h2><span class="muted">仅启用项</span></div>
+          <donut-chart :counts="summary.counts || {}"></donut-chart>
+        </div>
+        <div class="panel chart-card wide">
+          <div class="panel-head">
+            <h2>巡检趋势</h2>
+            <div class="segmented"><button v-for="n in [7,14,30]" :key="n" :class="{active: trendDays===n}" @click="trendDays=n">{{ n }} 天</button></div>
+          </div>
+          <trend-chart :history="history" :days="trendDays"></trend-chart>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>分类健康度</h2><span class="muted">按启用巡检项统计</span></div>
+        <category-bars :categories="summary.categories || []"></category-bars>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>巡检项最新状态</h2><span class="muted">共 {{ summary.configured_total || 0 }} 项</span></div>
+        <status-tiles :states="summary.states || []"></status-tiles>
+      </section>
+
       <section class="panel"><h2>当前异常</h2><incident-table :items="summary.open_incidents || []"></incident-table></section>
       <section class="panel"><h2>最近恢复</h2><incident-table :items="summary.recovered_incidents || []"></incident-table></section>
     </template>
-    <section v-else-if="categoryViews[view]" class="panel"><h2>{{ currentTitle }}检查结果</h2><check-table :items="filteredChecks"></check-table></section>
-    <section v-else-if="view==='history'" class="panel"><h2>最近 30 天总体状态</h2><table><thead><tr><th>日期</th><th>OK</th><th>WARNING</th><th>CRITICAL</th><th>UNKNOWN</th></tr></thead><tbody><tr v-for="row in history"><td>{{ row.date }}</td><td>{{ row.OK }}</td><td>{{ row.WARNING }}</td><td>{{ row.CRITICAL }}</td><td>{{ row.UNKNOWN }}</td></tr></tbody></table></section>
-    <section v-else-if="view==='tasks'" class="panel"><h2>调度计划</h2><table><thead><tr><th>任务</th><th>下次执行</th><th>触发器</th></tr></thead><tbody><tr v-for="job in tasks.scheduled"><td>{{ job.name }}</td><td>{{ formatTime(job.next_run_time) }}</td><td>{{ job.trigger }}</td></tr></tbody></table><h2 style="margin-top:24px">执行历史</h2><table><thead><tr><th>任务</th><th>状态</th><th>开始</th><th>结束</th><th>结果</th></tr></thead><tbody><tr v-for="task in tasks.history"><td>{{ task.name }}</td><td><span :class="['status',task.status==='SUCCESS'?'OK':task.status==='FAILED'?'CRITICAL':'UNKNOWN']">{{ task.status }}</span></td><td>{{ formatTime(task.started_at) }}</td><td>{{ formatTime(task.finished_at) }}</td><td>{{ task.detail }}</td></tr></tbody></table></section>
-    <section v-else-if="view==='config'" class="panel"><h2>脱敏后的当前配置</h2><pre>{{ JSON.stringify(config,null,2) }}</pre></section>
-    <section v-else-if="view==='users'" class="panel"><h2>权限管理</h2><p class="muted">用户账号来自 data/password.txt；管理员拥有全部页面。普通用户页面权限通过 API 维护。</p><table><thead><tr><th>用户名</th><th>角色</th><th>可访问页面</th></tr></thead><tbody><tr v-for="user in users"><td>{{ user.username }}</td><td>{{ user.role }}</td><td>{{ user.pages.join(', ') }}</td></tr></tbody></table></section>
+
+    <template v-else-if="view==='inspection'">
+      <section class="cards compact">
+        <div class="card"><div class="muted">巡检项总数</div><div class="value">{{ summary.configured_total || 0 }}</div></div>
+        <div class="card"><div class="muted">已启用</div><div class="value ok">{{ summary.total || 0 }}</div></div>
+        <div class="card"><div class="muted">已停用</div><div class="value muted-value">{{ summary.disabled || 0 }}</div></div>
+        <div class="card"><div class="muted">当前异常</div><div class="value warn">{{ (summary.open_incidents || []).length }}</div></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>巡检计划</h2>
+          <span class="muted">修改后立即生效，无需重启服务</span>
+        </div>
+        <div class="form-grid" @input="scheduleDirty=true" @change="scheduleDirty=true">
+          <label class="switch-field"><input type="checkbox" v-model="scheduleForm.enabled" :disabled="!isAdmin"><span>启用定时巡检</span></label>
+          <label>调度模式
+            <select v-model="scheduleForm.mode" :disabled="!isAdmin">
+              <option value="interval">固定间隔</option>
+              <option value="cron">每日定时</option>
+            </select>
+          </label>
+          <label v-if="scheduleForm.mode==='interval'">巡检间隔（分钟）
+            <input type="number" min="1" max="1440" v-model.number="scheduleForm.interval_minutes" :disabled="!isAdmin">
+          </label>
+          <label v-else>巡检时间点（逗号分隔）
+            <input v-model="timesText" placeholder="08:00,12:00,18:00" :disabled="!isAdmin">
+          </label>
+          <label>时间窗口开始
+            <input type="time" v-model="scheduleForm.window_start" :disabled="!isAdmin">
+          </label>
+          <label>时间窗口结束
+            <input type="time" v-model="scheduleForm.window_end" :disabled="!isAdmin">
+          </label>
+          <label>每日报告时间
+            <input type="time" v-model="scheduleForm.daily_report_time" :disabled="!isAdmin">
+          </label>
+          <label class="switch-field"><input type="checkbox" v-model="scheduleForm.daily_report_enabled" :disabled="!isAdmin"><span>启用每日报告</span></label>
+          <label class="switch-field"><input type="checkbox" v-model="scheduleForm.run_on_startup" :disabled="!isAdmin"><span>启动时立即巡检</span></label>
+        </div>
+        <p class="hint">时间窗口支持跨天（如 22:00 - 06:00）。固定间隔模式下，只有落在窗口内的触发才会执行；每日定时模式同样受窗口约束。</p>
+        <div class="form-actions" v-if="isAdmin">
+          <button class="primary" @click="saveSchedule" :disabled="savingSchedule">{{ savingSchedule ? '保存中…' : '保存巡检计划' }}</button>
+        </div>
+        <div class="jobs">
+          <div class="panel-head sub"><h3>当前调度任务</h3></div>
+          <table>
+            <thead><tr><th>任务</th><th>下次执行</th><th>触发器</th></tr></thead>
+            <tbody>
+              <tr v-if="!tasks.scheduled.length"><td colspan="3" class="muted">暂无调度任务</td></tr>
+              <tr v-for="job in tasks.scheduled" :key="job.id"><td>{{ job.name }}</td><td>{{ formatTime(job.next_run_time) }}</td><td class="message">{{ job.trigger }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>巡检参数</h2><span class="muted">作为 checks.yaml 中未单独配置时的默认值</span></div>
+        <div class="form-grid" @input="limitsDirty=true" @change="limitsDirty=true">
+          <label v-for="field in limitFields" :key="field.key">{{ field.label }}
+            <input type="number" :step="field.step" v-model.number="limitsForm[field.key]" :disabled="!isAdmin">
+          </label>
+        </div>
+        <div class="form-actions" v-if="isAdmin">
+          <button class="primary" @click="saveLimits" :disabled="savingLimits">{{ savingLimits ? '保存中…' : '保存巡检参数' }}</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>巡检项开关</h2>
+          <div class="filters">
+            <input class="search" v-model="checkSearch" placeholder="搜索名称 / ID">
+            <select v-model="checkCategoryFilter">
+              <option value="">全部类别</option>
+              <option v-for="item in summary.categories || []" :key="item.id" :value="item.id">{{ item.label }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="bulk-actions" v-if="isAdmin">
+          <button class="secondary" @click="bulkToggle(filteredInspectionChecks, true)" :disabled="!filteredInspectionChecks.length">启用当前列表</button>
+          <button class="secondary danger" @click="bulkToggle(filteredInspectionChecks, false)" :disabled="!filteredInspectionChecks.length">停用当前列表</button>
+          <span class="muted">停用后保留历史数据，但不再执行巡检，也不会出现在异常统计中。</span>
+        </div>
+        <div class="check-list">
+          <div v-for="item in filteredInspectionChecks" :key="item.check_id" :class="['check-row', {disabled: !item.enabled}]">
+            <label class="toggle" :title="isAdmin ? '启用 / 停用' : '仅管理员可修改'">
+              <input type="checkbox" :checked="item.enabled" @change="toggleCheck(item, $event.target.checked)" :disabled="!isAdmin">
+              <span class="toggle-track"></span>
+            </label>
+            <div class="check-main">
+              <div class="check-title">
+                <strong>{{ item.name }}</strong>
+                <span class="tag">{{ categoryLabel(item.category) }}</span>
+                <code>{{ item.check_id }}</code>
+              </div>
+              <div class="check-meta">最近检查 {{ formatTime(item.last_checked_at) }} · 响应 {{ latency(item.latency_ms) }}</div>
+              <div class="check-message">{{ item.message }}</div>
+            </div>
+            <span :class="['status', item.enabled ? item.status : 'UNKNOWN']">{{ item.enabled ? item.status : '已停用' }}</span>
+          </div>
+          <div v-if="!filteredInspectionChecks.length" class="empty">没有匹配的巡检项</div>
+        </div>
+      </section>
+    </template>
+
+    <section v-else-if="categoryViews[view]" class="panel">
+      <div class="panel-head">
+        <h2>{{ currentTitle }}</h2>
+        <span class="muted">启用 {{ categoryEnabledCount }} / {{ categoryStates.length }} 项</span>
+      </div>
+      <check-table :items="categoryStates"></check-table>
+    </section>
+
+    <template v-else-if="view==='history'">
+      <section class="panel">
+        <div class="panel-head"><h2>最近 30 天总体状态</h2><span class="muted">每天所有巡检结果的状态计数</span></div>
+        <trend-chart :history="history" :days="30"></trend-chart>
+      </section>
+      <section class="panel">
+        <h2>每日明细</h2>
+        <table>
+          <thead><tr><th>日期</th><th>OK</th><th>WARNING</th><th>CRITICAL</th><th>UNKNOWN</th></tr></thead>
+          <tbody><tr v-for="row in history" :key="row.date"><td>{{ row.date }}</td><td>{{ row.OK }}</td><td>{{ row.WARNING }}</td><td>{{ row.CRITICAL }}</td><td>{{ row.UNKNOWN }}</td></tr></tbody>
+        </table>
+      </section>
+    </template>
+
+    <section v-else-if="view==='tasks'" class="panel">
+      <h2>调度计划</h2>
+      <table>
+        <thead><tr><th>任务</th><th>下次执行</th><th>触发器</th></tr></thead>
+        <tbody>
+          <tr v-if="!tasks.scheduled.length"><td colspan="3" class="muted">暂无调度任务</td></tr>
+          <tr v-for="job in tasks.scheduled" :key="job.id"><td>{{ job.name }}</td><td>{{ formatTime(job.next_run_time) }}</td><td class="message">{{ job.trigger }}</td></tr>
+        </tbody>
+      </table>
+      <h2 class="section-title">执行历史</h2>
+      <table>
+        <thead><tr><th>任务</th><th>状态</th><th>开始</th><th>结束</th><th>结果</th></tr></thead>
+        <tbody>
+          <tr v-for="task in tasks.history" :key="task.id">
+            <td>{{ task.name }}</td>
+            <td><span :class="['status', task.status==='SUCCESS'?'OK':task.status==='FAILED'?'CRITICAL':'UNKNOWN']">{{ task.status }}</span></td>
+            <td>{{ formatTime(task.started_at) }}</td>
+            <td>{{ formatTime(task.finished_at) }}</td>
+            <td class="message">{{ task.detail }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section v-else-if="view==='config'" class="panel">
+      <h2>脱敏后的当前配置</h2>
+      <p class="muted">包含 config/app.json、checks.yaml 默认值以及数据库中保存的巡检管理配置。</p>
+      <pre>{{ JSON.stringify(config,null,2) }}</pre>
+    </section>
+
+    <section v-else-if="view==='users'" class="panel">
+      <h2>权限管理</h2>
+      <p class="muted">用户账号来自 data/password.txt；管理员固定拥有全部页面。普通用户可访问的页面可在此维护。</p>
+      <table>
+        <thead><tr><th>用户名</th><th>角色</th><th>可访问页面</th></tr></thead>
+        <tbody>
+          <tr v-for="user in users" :key="user.username">
+            <td>{{ user.username }}</td>
+            <td>{{ user.role }}</td>
+            <td>
+              <span v-if="user.role==='admin'" class="muted">全部页面</span>
+              <div v-else class="permission-grid">
+                <label v-for="page in pagesCatalog" :key="page.id">
+                  <input type="checkbox" :checked="user.pages.includes(page.id)" @change="updateUserPage(user, page.id, $event.target.checked)">
+                  {{ page.label }}
+                </label>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </main>
+  <div v-if="toast" :class="['toast',{error: toastError}]">{{ toast }}</div>
 </div>
 {% endraw %}
-<script>window.INSPECTOR_BOOTSTRAP={{ {"user": user, "version": version, "pages": pages}|tojson }};</script>
+<script>window.INSPECTOR_BOOTSTRAP={{ {"user": user, "version": version, "pages": pages, "pages_catalog": pages_catalog}|tojson }};</script>
 {% raw %}
 <script src="/static/vue.global.prod.js"></script>
 <script>
 const {createApp}=Vue;
-const CheckTable={props:['items'],template:`<table><thead><tr><th>状态</th><th>名称</th><th>最近检查</th><th>响应</th><th>连续失败</th><th>摘要</th></tr></thead><tbody><tr v-for="item in items" :key="item.check_id"><td><span :class="['status',item.status]">{{item.status}}</span></td><td>{{item.name}}</td><td>{{new Date(item.last_checked_at).toLocaleString('zh-CN')}}</td><td>{{item.latency_ms==null?'—':Math.round(item.latency_ms)+'ms'}}</td><td>{{item.consecutive_failures}}</td><td class="message">{{item.message}}</td></tr></tbody></table>`};
-const IncidentTable={props:['items'],template:`<table><thead><tr><th>状态</th><th>系统</th><th>首次发生</th><th>失败次数</th><th>持续时间</th><th>最近错误</th></tr></thead><tbody><tr v-if="!items.length"><td colspan="6" class="muted">暂无记录</td></tr><tr v-for="item in items" :key="item.id"><td><span :class="['status',item.status==='RECOVERED'?'OK':item.severity]">{{item.status}}</span></td><td>{{item.name}}</td><td>{{new Date(item.first_seen_at).toLocaleString('zh-CN')}}</td><td>{{item.failure_count}}</td><td>{{Math.round(item.duration_seconds/60)}} 分钟</td><td class="message">{{item.last_error}}</td></tr></tbody></table>`};
-createApp({components:{CheckTable,IncidentTable},data(){return{bootstrap:window.INSPECTOR_BOOTSTRAP,view:'dashboard',summary:{counts:{}},checks:[],history:[],tasks:{scheduled:[],history:[]},config:{},users:[],running:false,categoryViews:{hosts:'host',services:'service',docker:'docker',databases:'database',logs:'log',jenkins:'jenkins'},allNav:[['dashboard','总览'],['hosts','主机'],['services','服务和接口'],['docker','Docker'],['databases','数据库'],['logs','日志'],['jenkins','Jenkins 和定时任务'],['history','历史记录'],['tasks','任务中心'],['config','系统配置'],['users','权限管理']]}},computed:{navigation(){return this.allNav.filter(([id])=>this.bootstrap.user.role==='admin'||this.bootstrap.pages.includes('*')||this.bootstrap.pages.includes(id)).map(([id,label])=>({id,label}))},currentTitle(){return this.navigation.find(x=>x.id===this.view)?.label||'总览'},filteredChecks(){return(this.summary.states||[]).filter(x=>x.category===this.categoryViews[this.view])}},methods:{formatTime(v){return v?new Date(v).toLocaleString('zh-CN'):'尚无'},async json(url,options){const r=await fetch(url,options);if(r.status===401){location='/login';throw new Error('未登录')}if(!r.ok)throw new Error(await r.text());return r.json()},async loadAll(){this.summary=await this.json('/api/summary');this.checks=await this.json('/api/checks?limit=1000');this.history=await this.json('/api/history');this.tasks=await this.json('/api/tasks');if(this.bootstrap.user.role==='admin'){this.config=await this.json('/api/config');this.users=await this.json('/api/users')}},async runInspection(){this.running=true;try{await this.json('/api/run',{method:'POST'});await this.loadAll()}catch(e){alert(e.message)}finally{this.running=false}},select(id){this.view=id}} ,mounted(){this.loadAll();setInterval(()=>this.loadAll(),60000)}}).mount('#app');
-</script></body></html>
+const STATUS_COLORS={OK:'#15803d',WARNING:'#b45309',CRITICAL:'#b91c1c',UNKNOWN:'#64748b'};
+const STATUS_KEYS=['OK','WARNING','CRITICAL','UNKNOWN'];
+const CATEGORY_LABELS={host:'主机',service:'服务和接口',docker:'Docker',database:'数据库',log:'日志',jenkins:'Jenkins 和定时任务'};
+const CATEGORY_ORDER=['host','service','docker','database','log','jenkins'];
+const fmtTime=(v)=>v?new Date(v).toLocaleString('zh-CN'):'尚无';
+const fmtLatency=(v)=>v==null?'—':Math.round(v)+'ms';
+
+const DonutChart={
+  props:['counts'],
+  computed:{
+    total(){return STATUS_KEYS.reduce((sum,key)=>sum+Number(this.counts[key]||0),0);},
+    segments(){
+      const circumference=2*Math.PI*54;let offset=0;
+      return STATUS_KEYS.map(key=>{
+        const value=Number(this.counts[key]||0);
+        const length=this.total?circumference*value/this.total:0;
+        const segment={key,value,color:STATUS_COLORS[key],dash:length+' '+(circumference-length),offset:-offset};
+        offset+=length;return segment;
+      });
+    }
+  },
+  template:`<div class="donut-wrap">
+    <svg viewBox="0 0 140 140" class="donut">
+      <circle cx="70" cy="70" r="54" fill="none" stroke="#eef2f7" stroke-width="18"></circle>
+      <circle v-for="segment in segments" :key="segment.key" cx="70" cy="70" r="54" fill="none" :stroke="segment.color" stroke-width="18" :stroke-dasharray="segment.dash" :stroke-dashoffset="segment.offset" transform="rotate(-90 70 70)"></circle>
+      <text x="70" y="67" text-anchor="middle" class="donut-total">{{ total }}</text>
+      <text x="70" y="87" text-anchor="middle" class="donut-label">启用巡检项</text>
+    </svg>
+    <div class="legend vertical">
+      <div v-for="key in ['OK','WARNING','CRITICAL','UNKNOWN']" :key="key" class="legend-item"><i :style="{background:STATUS_COLORS[key]}"></i><span>{{ key }}</span><strong>{{ counts[key] || 0 }}</strong></div>
+    </div>
+  </div>`,
+  data(){return{STATUS_COLORS};}
+};
+
+const TrendChart={
+  props:['history','days'],
+  computed:{
+    rows(){return (this.history||[]).slice(-Number(this.days||14));},
+    max(){return Math.max(1,...this.rows.map(row=>STATUS_KEYS.reduce((sum,key)=>sum+Number(row[key]||0),0)));},
+    bars(){
+      const rows=this.rows;const width=760,left=38,right=14,top=18,plotHeight=190;
+      const plotWidth=width-left-right;const step=plotWidth/Math.max(1,rows.length);
+      const barWidth=Math.max(4,Math.min(36,step*0.62));
+      return rows.map((row,index)=>{
+        const x=left+step*index+(step-barWidth)/2;let bottom=top+plotHeight;const segments=[];
+        STATUS_KEYS.forEach(key=>{
+          const value=Number(row[key]||0);if(!value)return;
+          const height=plotHeight*value/this.max;bottom-=height;
+          segments.push({key,color:STATUS_COLORS[key],x,y:bottom,width:barWidth,height});
+        });
+        return {x,width:barWidth,segments,label:String(row.date||'').slice(5),total:STATUS_KEYS.reduce((sum,key)=>sum+Number(row[key]||0),0)};
+      });
+    },
+    segments(){return this.bars.flatMap(bar=>bar.segments);},
+    grid(){
+      const lines=[];const top=18;const height=190;
+      for(let index=0;index<=4;index++){lines.push({y:top+height*index/4,value:Math.round(this.max*(1-index/4))});}
+      return lines;
+    },
+    labelEvery(){return Math.max(1,Math.ceil(this.rows.length/8));}
+  },
+  methods:{fmtTime},
+  template:`<div class="trend">
+    <svg viewBox="0 0 760 240" class="trend-svg" role="img" aria-label="巡检趋势图">
+      <line v-for="line in grid" :key="'g'+line.y" x1="38" :y1="line.y" x2="746" :y2="line.y" class="grid-line"></line>
+      <text v-for="line in grid" :key="'gt'+line.y" x="4" :y="line.y+4" class="axis-label">{{ line.value }}</text>
+      <rect v-for="(segment,index) in segments" :key="'s'+index" :x="segment.x" :y="segment.y" :width="segment.width" :height="segment.height" :fill="segment.color" rx="1.5"></rect>
+      <text v-for="(bar,index) in bars" v-show="index%labelEvery===0" :key="'l'+index" :x="bar.x+bar.width/2" y="232" text-anchor="middle" class="axis-label">{{ bar.label }}</text>
+    </svg>
+    <div v-if="!rows.length" class="empty chart-empty">暂无历史数据</div>
+    <div class="legend">
+      <div v-for="key in ['OK','WARNING','CRITICAL','UNKNOWN']" :key="key" class="legend-item"><i :style="{background:STATUS_COLORS[key]}"></i><span>{{ key }}</span></div>
+    </div>
+  </div>`,
+  data(){return{STATUS_COLORS};}
+};
+
+const CategoryBars={
+  props:['categories'],
+  computed:{
+    rows(){
+      return (this.categories||[]).map(category=>{
+        const total=Math.max(1,Number(category.total||0));
+        const segments=STATUS_KEYS.map(key=>({key,value:Number(category.counts?.[key]||0),width:(100*Number(category.counts?.[key]||0)/total)+'%'}));
+        return {...category,segments};
+      });
+    }
+  },
+  template:`<div class="category-bars">
+    <div v-for="row in rows" :key="row.id" class="category-row">
+      <div class="category-label">{{ row.label }}</div>
+      <div class="bar-track">
+        <span v-for="segment in row.segments" :key="segment.key" :class="['bar-seg',segment.key]" :style="{width:segment.width}" :title="segment.key+' '+segment.value"></span>
+        <span v-if="!row.total" class="bar-seg empty"></span>
+      </div>
+      <div class="category-count">{{ row.total }} 启用<span v-if="row.disabled"> · {{ row.disabled }} 停用</span></div>
+    </div>
+  </div>`
+};
+
+const StatusTiles={
+  props:['states'],
+  computed:{
+    groups(){
+      const map={};
+      (this.states||[]).forEach(item=>{(map[item.category]=map[item.category]||[]).push(item);});
+      return Object.keys(map).sort((a,b)=>{
+        const left=CATEGORY_ORDER.indexOf(a),right=CATEGORY_ORDER.indexOf(b);
+        return (left<0?99:left)-(right<0?99:right);
+      }).map(id=>({id,label:CATEGORY_LABELS[id]||id,items:map[id]}));
+    }
+  },
+  methods:{fmtTime,fmtLatency},
+  template:`<div class="tile-groups">
+    <div v-for="group in groups" :key="group.id" class="tile-group">
+      <div class="tile-group-head"><h3>{{ group.label }}</h3><span class="muted">{{ group.items.filter(item=>item.enabled).length }} / {{ group.items.length }} 启用</span></div>
+      <div class="tiles">
+        <div v-for="item in group.items" :key="item.check_id" :class="['check-tile',item.enabled?item.status:'DISABLED']">
+          <div class="tile-top">
+            <span :class="['status',item.enabled?item.status:'UNKNOWN']">{{ item.enabled?item.status:'已停用' }}</span>
+            <span class="tile-latency">{{ item.enabled?fmtLatency(item.latency_ms):'—' }}</span>
+          </div>
+          <div class="tile-name">{{ item.name }}</div>
+          <div class="tile-meta">{{ fmtTime(item.last_checked_at) }}</div>
+          <div class="tile-message">{{ item.enabled?item.message:'已停用，不参与巡检' }}</div>
+        </div>
+      </div>
+    </div>
+  </div>`
+};
+
+const CheckTable={
+  props:['items'],
+  methods:{
+    fmtTime,
+    fmtLatency,
+    categoryLabel(value){return CATEGORY_LABELS[value]||value;}
+  },
+  template:`<table>
+    <thead><tr><th>状态</th><th>名称</th><th>类别</th><th>类型</th><th>最近检查</th><th>响应</th><th>连续失败</th><th>摘要</th></tr></thead>
+    <tbody>
+      <tr v-if="!items.length"><td colspan="8" class="muted">暂无巡检项</td></tr>
+      <tr v-for="item in items" :key="item.check_id" :class="{disabled: !item.enabled}">
+        <td><span :class="['status',item.enabled?item.status:'UNKNOWN']">{{ item.enabled?item.status:'已停用' }}</span></td>
+        <td>{{ item.name }}</td>
+        <td>{{ categoryLabel(item.category) }}</td>
+        <td>{{ item.type }}</td>
+        <td>{{ fmtTime(item.last_checked_at) }}</td>
+        <td>{{ fmtLatency(item.latency_ms) }}</td>
+        <td>{{ item.consecutive_failures }}</td>
+        <td class="message">{{ item.message }}</td>
+      </tr>
+    </tbody>
+  </table>`
+};
+
+const IncidentTable={
+  props:['items'],
+  methods:{
+    fmtTime,
+    statusClass(item){return item.status==='RECOVERED'?'OK':item.status==='CLOSED'?'UNKNOWN':item.severity;}
+  },
+  template:`<table>
+    <thead><tr><th>状态</th><th>系统</th><th>首次发生</th><th>失败次数</th><th>持续时间</th><th>最近错误</th></tr></thead>
+    <tbody>
+      <tr v-if="!items.length"><td colspan="6" class="muted">暂无记录</td></tr>
+      <tr v-for="item in items" :key="item.id">
+        <td><span :class="['status',statusClass(item)]">{{ item.status }}</span></td>
+        <td>{{ item.name }}</td>
+        <td>{{ fmtTime(item.first_seen_at) }}</td>
+        <td>{{ item.failure_count }}</td>
+        <td>{{ Math.round(item.duration_seconds/60) }} 分钟</td>
+        <td class="message">{{ item.last_error }}</td>
+      </tr>
+    </tbody>
+  </table>`
+};
+
+createApp({
+  components:{DonutChart,TrendChart,CategoryBars,StatusTiles,CheckTable,IncidentTable},
+  data(){
+    return{
+      bootstrap:window.INSPECTOR_BOOTSTRAP,
+      pagesCatalog:window.INSPECTOR_BOOTSTRAP.pages_catalog||[],
+      view:'dashboard',
+      expanded:{'inspection-group':true},
+      summary:{counts:{},states:[],categories:[],open_incidents:[],recovered_incidents:[]},
+      inspection:{schedule:{},limits:{},jobs:[]},
+      scheduleForm:{enabled:true,mode:'interval',interval_minutes:15,times:['09:00'],window_start:'00:00',window_end:'23:59',daily_report_enabled:true,daily_report_time:'09:00',run_on_startup:true},
+      limitsForm:{},
+      timesText:'09:00',
+      scheduleDirty:false,
+      limitsDirty:false,
+      history:[],
+      tasks:{scheduled:[],history:[]},
+      config:{},
+      users:[],
+      running:false,
+      loading:false,
+      savingSchedule:false,
+      savingLimits:false,
+      checkSearch:'',
+      checkCategoryFilter:'',
+      trendDays:14,
+      toast:'',
+      toastError:false,
+      categoryViews:{hosts:'host',services:'service',docker:'docker',databases:'database',logs:'log',jenkins:'jenkins'},
+      allNav:[
+        {id:'dashboard',label:'仪表盘'},
+        {id:'inspection-group',label:'巡检管理',page:'inspection',children:[
+          {id:'hosts',label:'主机'},
+          {id:'services',label:'服务和接口'},
+          {id:'docker',label:'Docker'},
+          {id:'databases',label:'数据库'},
+          {id:'logs',label:'日志'},
+          {id:'jenkins',label:'Jenkins 和定时任务'}
+        ]},
+        {id:'history',label:'历史记录'},
+        {id:'tasks',label:'任务中心'},
+        {id:'config',label:'系统配置'},
+        {id:'users',label:'权限管理'}
+      ],
+      limitFields:[
+        {key:'timeout_seconds',label:'检查超时（秒）',step:'0.5'},
+        {key:'failure_threshold',label:'连续失败阈值',step:'1'},
+        {key:'warning_response_ms',label:'响应时间预警（毫秒）',step:'100'},
+        {key:'tls_warning_days',label:'TLS 预警天数',step:'1'},
+        {key:'tls_critical_days',label:'TLS 严重天数',step:'1'},
+        {key:'disk_warning_percent',label:'磁盘预警（%）',step:'1'},
+        {key:'disk_critical_percent',label:'磁盘严重（%）',step:'1'},
+        {key:'inode_warning_percent',label:'Inode 预警（%）',step:'1'},
+        {key:'max_log_bytes',label:'日志最大读取（字节）',step:'1024'}
+      ]
+    };
+  },
+  computed:{
+    isAdmin(){return this.bootstrap.user.role==='admin';},
+    roleLabel(){return this.isAdmin?'管理员':'普通用户';},
+    navigation(){
+      return this.allNav.map(item=>{
+        if(item.children){
+          const children=item.children.filter(child=>this.allowed(child.id));
+          if(!this.allowed(item.page)&&!children.length)return null;
+          return {...item,children};
+        }
+        return this.allowed(item.id)?item:null;
+      }).filter(Boolean);
+    },
+    flatNavigation(){
+      const result=[];
+      this.navigation.forEach(item=>{
+        if(item.children){
+          result.push({id:item.page,label:item.label});
+          item.children.forEach(child=>result.push(child));
+        }else{
+          result.push(item);
+        }
+      });
+      return result;
+    },
+    currentTitle(){return this.flatNavigation.find(item=>item.id===this.view)?.label||'仪表盘';},
+    categoryStates(){return (this.summary.states||[]).filter(item=>item.category===this.categoryViews[this.view]);},
+    categoryEnabledCount(){return this.categoryStates.filter(item=>item.enabled).length;},
+    filteredInspectionChecks(){
+      const keyword=this.checkSearch.trim().toLowerCase();
+      return (this.summary.states||[]).filter(item=>{
+        if(this.checkCategoryFilter&&item.category!==this.checkCategoryFilter)return false;
+        if(!keyword)return true;
+        return item.name.toLowerCase().includes(keyword)||item.check_id.toLowerCase().includes(keyword);
+      });
+    }
+  },
+  methods:{
+    allowed(id){return this.isAdmin||this.bootstrap.pages.includes('*')||this.bootstrap.pages.includes(id);},
+    formatTime:fmtTime,
+    latency:fmtLatency,
+    categoryLabel(value){return CATEGORY_LABELS[value]||value;},
+    select(id){this.view=id;window.scrollTo({top:0,behavior:'smooth'});},
+    openGroup(item){
+      if(this.allowed(item.page)){this.select(item.page);}
+      else if(item.children.length){this.select(item.children[0].id);}
+      this.expanded[item.id]=true;
+    },
+    notify(message,error){
+      this.toast=message;
+      this.toastError=Boolean(error);
+      window.clearTimeout(this._toastTimer);
+      this._toastTimer=window.setTimeout(()=>{this.toast='';},3500);
+    },
+    async json(url,options){
+      const response=await fetch(url,options);
+      if(response.status===401){location='/login';throw new Error('登录已过期');}
+      if(!response.ok){
+        let detail=await response.text();
+        try{const parsed=JSON.parse(detail);detail=parsed.detail||detail;}catch(error){}
+        throw new Error(detail);
+      }
+      return response.json();
+    },
+    async put(url,payload){
+      return this.json(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    },
+    syncForms(force){
+      if(force||!this.scheduleDirty){
+        this.scheduleForm={...this.inspection.schedule,times:[...(this.inspection.schedule.times||[])]};
+        this.timesText=(this.scheduleForm.times||[]).join(', ');
+        this.scheduleDirty=false;
+      }
+      if(force||!this.limitsDirty){
+        this.limitsForm={...this.inspection.limits};
+        this.limitsDirty=false;
+      }
+    },
+    async loadAll(full){
+      if(this.loading)return;
+      this.loading=true;
+      try{
+        const [summary,history,tasks,inspection]=await Promise.all([
+          this.json('/api/summary'),
+          this.json('/api/history?days=30'),
+          this.json('/api/tasks'),
+          this.json('/api/inspection')
+        ]);
+        this.summary=summary;
+        this.history=history;
+        this.tasks=tasks;
+        this.inspection=inspection;
+        this.syncForms(Boolean(full));
+        if(this.isAdmin){
+          const [config,users]=await Promise.all([this.json('/api/config'),this.json('/api/users')]);
+          this.config=config;
+          this.users=users;
+        }
+      }catch(error){
+        this.notify(error.message,true);
+      }finally{
+        this.loading=false;
+      }
+    },
+    async runInspection(){
+      this.running=true;
+      try{
+        const result=await this.json('/api/run',{method:'POST'});
+        this.notify(result.status==='SKIPPED'?result.message:'巡检完成');
+        await this.loadAll(true);
+      }catch(error){
+        this.notify(error.message,true);
+      }finally{
+        this.running=false;
+      }
+    },
+    async saveSchedule(){
+      this.savingSchedule=true;
+      try{
+        const times=this.timesText.split(',').map(value=>value.trim()).filter(Boolean);
+        const payload={...this.scheduleForm,times};
+        const result=await this.put('/api/inspection/schedule',payload);
+        this.inspection.schedule=result.schedule;
+        this.scheduleForm={...result.schedule,times:[...result.schedule.times]};
+        this.timesText=result.schedule.times.join(', ');
+        this.scheduleDirty=false;
+        this.tasks=await this.json('/api/tasks');
+        this.notify('巡检计划已保存并立即生效');
+      }catch(error){
+        this.notify(error.message,true);
+      }finally{
+        this.savingSchedule=false;
+      }
+    },
+    async saveLimits(){
+      this.savingLimits=true;
+      try{
+        const result=await this.put('/api/inspection/limits',this.limitsForm);
+        this.inspection.limits=result.limits;
+        this.limitsForm={...result.limits};
+        this.limitsDirty=false;
+        this.notify('巡检参数已保存');
+      }catch(error){
+        this.notify(error.message,true);
+      }finally{
+        this.savingLimits=false;
+      }
+    },
+    async toggleCheck(item,enabled){
+      try{
+        await this.put('/api/inspection/checks/'+encodeURIComponent(item.check_id),{enabled});
+        item.enabled=enabled;
+        await this.loadAll(true);
+        this.notify((enabled?'已启用：':'已停用：')+item.name);
+      }catch(error){
+        this.notify(error.message,true);
+        await this.loadAll(true);
+      }
+    },
+    async bulkToggle(items,enabled){
+      if(!items.length)return;
+      if(!enabled&&!window.confirm('确认停用当前列表中的 '+items.length+' 个巡检项？'))return;
+      try{
+        await this.put('/api/inspection/checks',{ids:items.map(item=>item.check_id),enabled});
+        await this.loadAll(true);
+        this.notify('已批量'+(enabled?'启用':'停用')+' '+items.length+' 个巡检项');
+      }catch(error){
+        this.notify(error.message,true);
+      }
+    },
+    async updateUserPage(user,pageId,checked){
+      const pages=new Set((user.pages||[]).filter(value=>value!=='*'));
+      if(checked)pages.add(pageId);else pages.delete(pageId);
+      try{
+        const result=await this.put('/api/users/'+encodeURIComponent(user.username)+'/permissions',{pages:[...pages]});
+        user.pages=result.pages;
+        this.notify('已更新 '+user.username+' 的页面权限');
+      }catch(error){
+        this.notify(error.message,true);
+        await this.loadAll(true);
+      }
+    }
+  },
+  mounted(){
+    this.loadAll(true);
+    window.setInterval(()=>this.loadAll(false),60000);
+  }
+}).mount('#app');
+</script>
 {% endraw %}
+</body>
+</html>

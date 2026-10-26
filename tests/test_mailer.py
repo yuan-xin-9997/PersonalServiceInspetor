@@ -13,12 +13,12 @@ def test_daily_email_render(settings_factory):
     database = Database(settings.database_url)
     database.create_all()
     with database.session() as session:
-        session.add(CheckState(check_id="x", name="示例服务", category="service", current_status="OK", consecutive_failures=0, last_message="正常", last_checked_at=datetime.now(ZoneInfo("Asia/Shanghai"))))
+        session.add(CheckState(check_id="health", name="示例服务", category="service", current_status="OK", consecutive_failures=0, last_message="正常", last_checked_at=datetime.now(ZoneInfo("Asia/Shanghai"))))
     engine = InspectionEngine(settings, database)
     mailer = Mailer(settings, database, engine)
     subject, html = mailer.render_daily()
     assert "个人服务日报" in subject
-    assert "示例服务" in html
+    assert "Health" in html
     assert "总体结论" in html
 
 
