@@ -21,9 +21,10 @@ chmod 750 "$TLS_DIR"
 chmod 640 "$TLS_DIR/server.key" "$TLS_DIR/server.crt" "$TLS_DIR/ca.crt"
 chmod 600 "$TLS_DIR/ca.key"
 ENV_FILE="$DEPLOY_ROOT/shared/.env"
-grep -Ev '^AI_(PUBLIC_BASE_URL|TLS_HOST|TLS_PORT|TLS_CERTFILE|TLS_KEYFILE)=' "$ENV_FILE" > "$ENV_FILE.ai-next" || true
+grep -Ev '^AI_(PUBLIC_BASE_URL|TLS_HOST|TLS_PORT|TLS_CERTFILE|TLS_KEYFILE|REQUIRE_HTTPS)=' "$ENV_FILE" > "$ENV_FILE.ai-next" || true
 {
   printf 'AI_PUBLIC_BASE_URL=https://%s:%s\nAI_TLS_HOST=%s\nAI_TLS_PORT=%s\n' "$AI_TLS_HOST" "$AI_TLS_PORT" "$AI_TLS_HOST" "$AI_TLS_PORT"
+  printf 'AI_REQUIRE_HTTPS=true\n'
   printf 'AI_TLS_CERTFILE=%s/server.crt\nAI_TLS_KEYFILE=%s/server.key\n' "$TLS_DIR" "$TLS_DIR"
 } >> "$ENV_FILE.ai-next"
 chmod 600 "$ENV_FILE.ai-next"

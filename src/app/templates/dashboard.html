@@ -697,6 +697,9 @@ createApp({
     }
   },
   mounted(){
+    const requested=location.hash.slice(1);
+    if(this.flatNavigation.some(item=>item.id===requested))this.view=requested;
+    else if(!this.allowed(this.view)&&this.flatNavigation.length)this.view=this.flatNavigation[0].id;
     this.loadAll(true);
     window.setInterval(()=>this.loadAll(false),60000);
   }

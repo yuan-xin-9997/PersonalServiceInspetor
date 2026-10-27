@@ -420,3 +420,19 @@ def test_browser_test_protocol_and_paginated_credentials(settings_factory):
         assert len(rpc("tools/list", {})["tools"]) == 9
         assert not rpc("tools/call", {"name": "get_summary", "arguments": {}}).get("isError", False)
         assert c.post("/api/v1/token", headers=headers).status_code == 401
+
+
+def test_production_tls_boundary_preserves_legacy_web(settings_factory, monkeypatch):
+    monkeypatch.setenv("AI_REQUIRE_HTTPS", "true")
+    app = create_app(settings_factory(), start_scheduler=False)
+    with TestClient(app) as c:
+        assert c.get("/health/ready").status_code == 200
+        csrf = login(c)
+        assert c.get("/api/summary").status_code == 200
+        assert c.get("/api/ai/info").json()["require_https"] is True
+        assert create(c, csrf).status_code == 403
+        for path in ["/mcp", "/token", "/revoke", "/register", "/api/v1/token"]:
+            assert c.post(path, json={}).status_code == 403
+    with TestClient(create_app(app.state.runtime.settings, start_scheduler=False), base_url="https://testserver") as c:
+        csrf = login(c)
+        assert create(c, csrf).status_code == 201

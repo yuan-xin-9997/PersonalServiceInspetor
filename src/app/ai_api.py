@@ -231,6 +231,7 @@ def install_ai(application, runtime, current_user):
         csrf = request.session.setdefault("csrf", secrets.token_urlsafe(32))
         allowed = service.allowed_scopes(user["username"])
         return {
+            "require_https": os.getenv("AI_REQUIRE_HTTPS", "").lower() in {"1", "true"},
             "csrf": csrf,
             "scopes": [
                 {"id": key, "description": SCOPES[key][0]} for key in SCOPES if key in allowed
@@ -426,7 +427,7 @@ def install_ai(application, runtime, current_user):
         stateless_http=True,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
-            allowed_hosts=list(set([host, "testserver", *hosts])),
+            allowed_hosts=list(set([host, *hosts])),
             allowed_origins=origins,
         ),
     )

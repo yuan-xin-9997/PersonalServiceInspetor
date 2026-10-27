@@ -391,6 +391,10 @@ def create_app(settings: Settings | None = None, start_scheduler: bool = True) -
         machine_path = path.startswith(("/api/v1", "/mcp"))
         sensitive = machine_path or path.startswith(("/api/ai", "/ai/consent")) or path in {"/token", "/authorize", "/register", "/revoke"}
         response = None
+        if os.getenv("AI_REQUIRE_HTTPS", "").lower() in {"1", "true"} and request.url.scheme != "https" and (
+            machine_path or path in {"/token", "/revoke", "/register", "/authorize"} or path.startswith("/ai/consent") or (path.startswith("/api/ai") and path != "/api/ai/info")
+        ):
+            response = JSONResponse({"error": {"code": 403, "message": "AI 凭据与业务调用必须使用配置的 HTTPS 入口"}}, status_code=403)
         if path.startswith("/mcp"):
             raw = request.headers.get("authorization", "")
             if raw.startswith("Bearer "):
