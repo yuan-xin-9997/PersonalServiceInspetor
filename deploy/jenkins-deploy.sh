@@ -34,6 +34,7 @@ cleanup_and_rollback() {
 trap cleanup_and_rollback EXIT
 
 mkdir -p "$RELEASE_DIR" "$SHARED_DIR/data/reports" "$SHARED_DIR/logs" "$SHARED_DIR/config"
+sudo python3.12 deploy/backup.py "$SHARED_DIR" "$RELEASE_ID"
 cp -a pyproject.toml README.md src "$RELEASE_DIR/"
 [[ -f "$SHARED_DIR/config/app.json" ]] || cp config/app.json "$SHARED_DIR/config/app.json"
 cp config/checks.yaml "$SHARED_DIR/config/checks.yaml"
@@ -73,7 +74,7 @@ ln -s "$SHARED_DIR/logs" "$RELEASE_DIR/logs"
 ln -s "$SHARED_DIR/config" "$RELEASE_DIR/config"
 ln -s "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
 printf '%s' "$GIT_COMMIT" > "$RELEASE_DIR/COMMIT"
-printf 'APP_VERSION=%s\n' "$GIT_SHORT_SHA" > "$RELEASE_DIR/version.env"
+printf 'APP_VERSION=%s\n' "$BUILD_NUMBER" > "$RELEASE_DIR/version.env"
 
 sudo install -o root -g root -m 0644 deploy/personal-system-inspector.service \
   "/etc/systemd/system/$SERVICE_NAME"
@@ -81,6 +82,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME" >/dev/null
 
 # Cut over only after the release and virtualenv are complete.
+sudo python3.12 deploy/backup.py "$SHARED_DIR" wait-idle
 DEPLOYED=1
 ln -sfn "$RELEASE_DIR" "$DEPLOY_ROOT/current"
 sudo systemctl restart "$SERVICE_NAME"
@@ -95,6 +97,27 @@ until curl --fail --silent --max-time 5 "http://127.0.0.1:$INTERNAL_PORT/health/
   fi
   sleep 5
 done
+
+# Verify TLS and OAuth discovery from the configured LAN address, using the internal CA.
+"$RELEASE_DIR/.venv/bin/python" - "$SHARED_DIR" <<'PY'
+import json, pathlib, ssl, sys, urllib.request
+root = pathlib.Path(sys.argv[1])
+values = dict(line.split('=', 1) for line in (root / '.env').read_text().splitlines() if '=' in line and not line.startswith('#'))
+base = values.get('AI_PUBLIC_BASE_URL')
+if base:
+    ca = root / 'tls/ca.crt'
+    context = ssl.create_default_context(cafile=str(ca)) if ca.exists() else ssl.create_default_context()
+    for path in ['/health/ready', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-authorization-server']:
+        with urllib.request.urlopen(base + path, context=context, timeout=15) as response:
+            data = json.load(response)
+        if path == '/health/ready':
+            assert data['database'] is True
+        elif 'protected-resource' in path:
+            assert data['resource'] == base + '/mcp'
+        else:
+            assert 'S256' in data['code_challenge_methods_supported']
+    print('TLS, OAuth discovery and resource binding verified')
+PY
 
 # Keep the active release plus exactly two rollback releases.
 current_release="$(readlink -f "$DEPLOY_ROOT/current")"

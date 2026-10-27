@@ -20,7 +20,7 @@ def settings_factory(tmp_path: Path):
         password_file = data_dir / "password.txt"
         password_file.write_text("admin:test-password:admin\nviewer:view-password:user\n", encoding="utf-8")
         app_data = {
-            "app": {"name": "测试巡检", "version": "test", "timezone": "Asia/Shanghai"},
+            "app": {"name": "测试巡检", "version": "test", "timezone": "Asia/Shanghai", "public_base_url": "https://testserver"},
             "storage": {"database_url": f"sqlite:///{(data_dir / 'test.sqlite3').as_posix()}", "report_directory": str(data_dir / "reports")},
             "scheduler": {"enabled": False, "run_on_startup": False, **scheduler_overrides},
             "email": {"send_incident_notifications": False},

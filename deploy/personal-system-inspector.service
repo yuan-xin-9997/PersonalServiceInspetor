@@ -15,7 +15,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/opt/personal-system-inspector/current/src
 Environment=APP_CONFIG_PATH=/opt/personal-system-inspector/shared/config/app.json
 Environment=CHECKS_CONFIG_PATH=/opt/personal-system-inspector/shared/config/checks.yaml
-ExecStart=/opt/personal-system-inspector/current/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 31880 --proxy-headers
+ExecStart=/opt/personal-system-inspector/current/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 31880 --proxy-headers --no-access-log
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

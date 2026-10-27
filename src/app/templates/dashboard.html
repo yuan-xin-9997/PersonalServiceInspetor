@@ -238,6 +238,7 @@
       </table>
     </section>
 
+    <ai-access v-else-if="view==='ai'" ref="aiAccess"></ai-access>
     <section v-else-if="view==='config'" class="panel">
       <h2>脱敏后的当前配置</h2>
       <p class="muted">包含 config/app.json、checks.yaml 默认值以及数据库中保存的巡检管理配置。</p>
@@ -273,13 +274,14 @@
 <script>window.INSPECTOR_BOOTSTRAP={{ {"user": user, "version": version, "pages": pages, "pages_catalog": pages_catalog}|tojson }};</script>
 {% raw %}
 <script src="/static/vue.global.prod.js"></script>
+<script src="/static/ai-access.js"></script>
 <script>
 const {createApp}=Vue;
 const STATUS_COLORS={OK:'#15803d',WARNING:'#b45309',CRITICAL:'#b91c1c',UNKNOWN:'#64748b'};
 const STATUS_KEYS=['OK','WARNING','CRITICAL','UNKNOWN'];
 const CATEGORY_LABELS={host:'主机',service:'服务和接口',docker:'Docker',database:'数据库',log:'日志',jenkins:'Jenkins 和定时任务'};
 const CATEGORY_ORDER=['host','service','docker','database','log','jenkins'];
-const fmtTime=(v)=>v?new Date(v).toLocaleString('zh-CN'):'尚无';
+const fmtTime=(v)=>v?new Date(v).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'}):'尚无';
 const fmtLatency=(v)=>v==null?'—':Math.round(v)+'ms';
 
 const DonutChart={
@@ -455,7 +457,7 @@ const IncidentTable={
 };
 
 createApp({
-  components:{DonutChart,TrendChart,CategoryBars,StatusTiles,CheckTable,IncidentTable},
+  components:{DonutChart,TrendChart,CategoryBars,StatusTiles,CheckTable,IncidentTable,AiAccess},
   data(){
     return{
       bootstrap:window.INSPECTOR_BOOTSTRAP,
@@ -495,7 +497,7 @@ createApp({
         ]},
         {id:'history',label:'历史记录'},
         {id:'tasks',label:'任务中心'},
-        {id:'config',label:'系统配置'},
+        {id:'config-group',label:'系统配置',page:'config',children:[{id:'ai',label:'AI 接入'}]},
         {id:'users',label:'权限管理'}
       ],
       limitFields:[
@@ -553,7 +555,7 @@ createApp({
     formatTime:fmtTime,
     latency:fmtLatency,
     categoryLabel(value){return CATEGORY_LABELS[value]||value;},
-    select(id){this.view=id;window.scrollTo({top:0,behavior:'smooth'});},
+    select(id){if(this.$refs.aiAccess?.secret){this.notify('请先保存并关闭一次性密钥窗口',true);return;}this.view=id;window.scrollTo({top:0,behavior:'smooth'});},
     openGroup(item){
       if(this.allowed(item.page)){this.select(item.page);}
       else if(item.children.length){this.select(item.children[0].id);}
@@ -594,10 +596,10 @@ createApp({
       this.loading=true;
       try{
         const [summary,history,tasks,inspection]=await Promise.all([
-          this.json('/api/summary'),
-          this.json('/api/history?days=30'),
-          this.json('/api/tasks'),
-          this.json('/api/inspection')
+          (this.allowed('dashboard')||this.allowed('inspection')||Object.keys(this.categoryViews).some(id=>this.allowed(id)))?this.json('/api/summary'):Promise.resolve({states:[],categories:[]}),
+          this.allowed('history')?this.json('/api/history?days=30'):Promise.resolve([]),
+          this.allowed('tasks')?this.json('/api/tasks'):Promise.resolve({scheduled:[],history:[]}),
+          this.allowed('inspection')?this.json('/api/inspection'):Promise.resolve({schedule:{},limits:{}})
         ]);
         this.summary=summary;
         this.history=history;

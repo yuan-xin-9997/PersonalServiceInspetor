@@ -85,7 +85,7 @@ pipeline {
                     sh '''
                         set +x
                         export SSHPASS="$C_UBUNTU_PASSWORD"
-                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && PYTHONPYCACHEPREFIX=.compile-cache .test-venv/bin/python -m compileall -q src && bash -n deploy/jenkins-deploy.sh"
+                        sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$C_UBUNTU_USER@127.0.0.1" "cd '$REMOTE_WORKSPACE' && PYTHONPYCACHEPREFIX=.compile-cache .test-venv/bin/python -m compileall -q src deploy examples && bash -n deploy/jenkins-deploy.sh && bash -n deploy/init-ai-tls.sh"
                     '''
                 }
             }

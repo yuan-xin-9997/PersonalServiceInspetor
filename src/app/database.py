@@ -120,6 +120,65 @@ class CheckSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class AICredential(Base):
+    __tablename__ = "ai_credentials"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    digest: Mapped[str] = mapped_column(String(64), unique=True)
+    prefix: Mapped[str] = mapped_column(String(20))
+    scopes: Mapped[list] = mapped_column(JSON)
+    created_at: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[int] = mapped_column(Integer)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AISecret(Base):
+    """Only hashes of bearer secrets; payload never contains the raw secret."""
+    __tablename__ = "ai_secrets"
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20), index=True)
+    credential_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    expires_at: Mapped[int] = mapped_column(Integer)
+    payload: Mapped[dict] = mapped_column(JSON)
+
+
+class AIClient(Base):
+    __tablename__ = "ai_clients"
+    id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+
+
+class AIJob(Base):
+    __tablename__ = "ai_jobs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), index=True)
+    credential_id: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AIRequest(Base):
+    __tablename__ = "ai_requests"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[int] = mapped_column(Integer)
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor: Mapped[str] = mapped_column(String(150))
+    operation: Mapped[str] = mapped_column(String(150))
+    target: Mapped[str] = mapped_column(String(200))
+    result: Mapped[str] = mapped_column(String(40))
+    at: Mapped[int] = mapped_column(Integer, index=True)
+
+
 class Database:
     def __init__(self, url: str):
         connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}

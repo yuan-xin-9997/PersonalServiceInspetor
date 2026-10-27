@@ -1,11 +1,12 @@
 {
   "app": {
     "name": "个人系统统一巡检中心",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "host": "0.0.0.0",
     "port": 31880,
     "timezone": "Asia/Shanghai",
-    "public_base_url": "http://192.168.0.111:31880"
+    "public_base_url": "http://192.168.0.111:31880",
+    "ai_public_base_url": "https://192.168.0.111:31881"
   },
   "storage": {
     "database_url": "sqlite:///./data/inspector.sqlite3",

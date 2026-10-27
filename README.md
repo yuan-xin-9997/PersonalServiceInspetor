@@ -1,5 +1,14 @@
 # Personal System Inspector
 
+1.2 新增版本化 AI API、官方 MCP Streamable HTTP 服务、OAuth PKCE 与短期令牌，以及系统配置 → **AI 接入** 页面。使用个人凭据，无需复制浏览器 Cookie；支持过期、撤销、实时权限约束、幂等异步任务和审计。
+
+- 原网页：`http://192.168.0.111:31880/`；推荐 AI HTTPS 入口：`https://192.168.0.111:31881/`（需信任内部 CA）。
+- API/OpenAPI：HTTPS 入口的 `/api/v1`、`/openapi.json`、`/docs`。
+- MCP：HTTPS 入口的 `/mcp`，使用 OAuth 或程序自动换取的短期令牌；API Key 不能直接用于 MCP。
+- 接入、权限、请求响应示例、客户端验证边界、部署与回滚：[AI 接入说明](docs/AI接入说明.md)。官方 SDK 自动续取示例：[examples/ai_client.py](examples/ai_client.py)。
+
+AI 部署沿用 Jenkins/systemd；发布前在线备份、等待现有任务完成，保留线上 app.json。系统版本显示 Jenkins 构建数字编号。当前仍是单进程任务消费者，不支持多实例部署。
+
 个人系统统一巡检中心，用一个轻量 Web 应用持续检查个人主机、内外网服务、API、Docker、PostgreSQL、MySQL、日志和 Jenkins。系统保存历史状态，连续失败达到阈值后记录事件，并在北京时间每日 09:00 发送 HTML 日报。
 
 1.1 版本新增“巡检管理”页面：巡检项可以在线启用/停用，巡检间隔、每日时间点、时间窗口、日报时间和阈值参数均可在页面修改并即时生效；首页升级为仪表盘，用环形图、趋势图、分类健康度和状态卡片展示各项巡检的最新情况。

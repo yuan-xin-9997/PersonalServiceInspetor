@@ -48,6 +48,7 @@ class UserStore:
                     session.add(UserPermission(username=user.username, role=user.role, pages=pages, updated_at=now))
                 elif permission.role != user.role:
                     permission.role = user.role
+                    permission.pages = ["*"] if user.role == "admin" else ["dashboard"]
                     permission.updated_at = now
 
     def authenticate(self, username: str, password: str) -> User | None:
@@ -59,6 +60,15 @@ class UserStore:
     def permission(self, username: str) -> UserPermission | None:
         with self.database.session() as session:
             return session.scalar(select(UserPermission).where(UserPermission.username == username))
+
+    def identity(self, username: str) -> dict | None:
+        user = self.users().get(username)
+        permission = self.permission(username)
+        if not user or not permission:
+            return None
+        role = "admin" if user.role == permission.role == "admin" else "user"
+        pages = ["*"] if role == "admin" else [p for p in permission.pages if p != "*"]
+        return {"username": username, "role": role, "pages": pages}
 
 
 def app_secret() -> str:

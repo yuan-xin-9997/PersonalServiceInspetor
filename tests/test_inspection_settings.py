@@ -163,5 +163,9 @@ def test_inspection_api_updates_checks_schedule_and_permissions(settings_factory
         assert client.put("/api/inspection/limits", json={"failure_threshold": 0}).status_code == 422
 
         client.post("/login", data={"username": "viewer", "password": "view-password"})
+        assert client.get("/api/inspection").status_code == 403
+        with app.state.runtime.database.session() as session:
+            from app.database import UserPermission
+            session.get(UserPermission, "viewer").pages = ["dashboard", "inspection"]
         assert client.get("/api/inspection").status_code == 200
         assert client.put("/api/inspection/checks/health", json={"enabled": True}).status_code == 403

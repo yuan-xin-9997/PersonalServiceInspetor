@@ -4,11 +4,12 @@ import asyncio
 import logging
 import uuid
 from collections import Counter
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from .checkers import CheckRunner
 from .config import Settings
@@ -273,12 +274,14 @@ class InspectionEngine:
             else:
                 incident.recovery_sent_at = self._now()
 
-    def summary(self) -> dict[str, Any]:
+    def summary(self, categories: set[str] | None = None) -> dict[str, Any]:
         configured = (
             self.store.configured_checks()
             if self.store
             else [{**item, "enabled": True} for item in self.settings.checks]
         )
+        if categories is not None:
+            configured = [item for item in configured if item["category"] in categories]
         with self.database.session() as session:
             state_rows = {row.check_id: row for row in session.scalars(select(CheckState))}
             latest_task = session.scalar(select(TaskRun).where(TaskRun.task_id.like("inspection:%")).order_by(desc(TaskRun.started_at)).limit(1))
@@ -357,11 +360,11 @@ class InspectionEngine:
             )
         return result
 
-    def close_open_incidents(self, check_id: str) -> int:
+    def close_open_incidents(self, check_id: str, session=None) -> int:
         """Close open incidents when an operator disables a check."""
         now = self._now()
         closed = 0
-        with self.database.session() as session:
+        with (nullcontext(session) if session is not None else self.database.session()) as session:
             values = list(session.scalars(select(Incident).where(Incident.check_id == check_id, Incident.status == "OPEN")))
             for incident in values:
                 incident.status = "CLOSED"
@@ -374,11 +377,14 @@ class InspectionEngine:
                 state.consecutive_failures = 0
         return closed
 
-    def checks(self, category: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+    def checks(self, category: str | None = None, limit: int = 500, run_id: str | None = None, offset: int = 0) -> list[dict[str, Any]]:
         with self.database.session() as session:
             statement = select(CheckResultRecord).order_by(desc(CheckResultRecord.observed_at)).limit(limit)
             if category:
                 statement = statement.where(CheckResultRecord.category == category)
+            if run_id:
+                statement = statement.where(CheckResultRecord.run_id == run_id)
+            statement = statement.order_by(CheckResultRecord.id.desc()).offset(offset)
             records = list(session.scalars(statement))
         return [
             {
@@ -397,6 +403,11 @@ class InspectionEngine:
             for row in records
         ]
 
+    def result_page(self, run_id: str, offset: int, limit: int) -> tuple[list[dict], int]:
+        with self.database.session() as session:
+            total = session.scalar(select(func.count()).select_from(CheckResultRecord).where(CheckResultRecord.run_id == run_id))
+        return self.checks(limit=limit, run_id=run_id, offset=offset), total
+
     def incidents(self, status: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
         with self.database.session() as session:
             statement = select(Incident).order_by(desc(Incident.opened_at)).limit(limit)
@@ -404,6 +415,12 @@ class InspectionEngine:
                 statement = statement.where(Incident.status == status)
             values = list(session.scalars(statement))
         return [self._incident_dict(value) for value in values]
+
+    def incident_page(self, offset: int, limit: int) -> tuple[list[dict], int]:
+        with self.database.session() as session:
+            total = session.scalar(select(func.count()).select_from(Incident))
+            rows = session.scalars(select(Incident).order_by(Incident.opened_at.desc(), Incident.id.desc()).offset(offset).limit(limit))
+            return [self._incident_dict(row) for row in rows], total
 
     def tasks(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.database.session() as session:

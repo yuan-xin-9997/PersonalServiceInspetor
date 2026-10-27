@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -214,11 +215,11 @@ class SettingsStore:
     def enabled_checks(self) -> list[dict[str, Any]]:
         return [item for item in self.configured_checks() if item["enabled"]]
 
-    def set_check_enabled(self, check_id: str, enabled: bool) -> None:
+    def set_check_enabled(self, check_id: str, enabled: bool, session=None) -> None:
         if check_id not in {item["id"] for item in self.settings.checks}:
             raise KeyError(check_id)
         now = datetime.now(ZoneInfo(self.settings.timezone))
-        with self.database.session() as session:
+        with (nullcontext(session) if session is not None else self.database.session()) as session:
             row = session.get(CheckSetting, check_id)
             if row is None:
                 session.add(CheckSetting(check_id=check_id, enabled=enabled, updated_at=now))
