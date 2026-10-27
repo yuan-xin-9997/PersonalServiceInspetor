@@ -42,20 +42,20 @@ const AiAccess={
     async json(url,options={}){const r=await fetch(url,{...options,cache:'no-store',headers:{'Content-Type':'application/json',...(url.startsWith('/api/ai/')&&options.method&&options.method!=='GET'?{'X-CSRF-Token':this.info?.csrf||''}:{}),...options.headers}});let body;try{body=await r.json();}catch{throw new Error('服务响应异常，请重试');}if(!r.ok)throw new Error(body.error?.message||body.detail||'请求失败');return body;},
     async load(){this.loading=true;this.error='';try{this.info=await this.json('/api/ai/info');if(this.info.require_https&&location.protocol!=='https:'){location.assign(new URL(this.info.api_url).origin+'/#ai');return;}this.scopes=this.scopes.filter(s=>this.info.scopes.some(v=>v.id===s));if(!this.scopes.length&&this.info.scopes.some(v=>v.id==='status:read'))this.scopes=['status:read'];await this.loadList();}catch(e){this.error=e.message;}finally{this.loading=false;}},
     async loadList(){try{const r=await this.json('/api/ai/credentials?offset='+this.offset+'&limit=20');this.rows=r.items;this.total=r.total;}catch(e){this.error=e.message;}},
-    async create(){this.busy=true;this.error='';try{const r=await this.json('/api/ai/credentials',{method:'POST',body:JSON.stringify({name:this.name,expires_at:new Date(Date.now()+this.days*86400000).toISOString(),scopes:this.scopes})});this.secret=r.secret;this.copyMessage='尚未复制';this.name='';this.offset=0;await this.loadList();}catch(e){this.error=e.message;await this.load();}finally{this.busy=false;}},
+    async create(){this.busy=true;this.error='';try{const r=await this.json('/api/ai/credentials',{method:'POST',body:JSON.stringify({name:this.name,expires_at:new Date(Date.now()+this.days*86400000).toISOString(),scopes:this.scopes})});this.secret=r.secret;this.copyMessage='尚未复制';this.name='';this.offset=0;await this.loadList();}catch(e){await this.load();this.error=e.message;}finally{this.busy=false;}},
     async copy(){try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(this.secret);else{const area=this.$el.querySelector('textarea');area.focus();area.select();if(!document.execCommand('copy'))throw new Error();}this.copyMessage='已复制。请保存后再关闭。';}catch{this.copyMessage='复制失败，请选择上方密钥手动复制后保存。';}},
     closeSecret(){this.secret='';this.copyMessage='';},
     revoke(row){this.pendingRevoke=row;},
     async confirmRevoke(){const row=this.pendingRevoke;this.busy=true;this.error='';try{await this.json('/api/ai/credentials/'+row.id,{method:'DELETE'});row.status='revoked';this.pendingRevoke=null;}catch(e){this.error=e.message;this.pendingRevoke=null;}finally{this.busy=false;}},
-    async test(){this.busy=true;this.testResult='';let token='';const key=this.testKey;this.testKey='';try{
-      const grant=await this.json(this.info.token_url,{method:'POST',headers:{Authorization:'Bearer '+key}});token=grant.access_token;this.testResult='认证：成功（短期令牌最多 15 分钟）';
-      const rpc=async(method,params={},version)=>{const r=await fetch(this.info.mcp_url,{method:'POST',cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',Accept:'application/json, text/event-stream',...(version?{'MCP-Protocol-Version':version}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});const b=await r.json();if(!r.ok||b.error)throw new Error('MCP '+method+' 失败（'+r.status+'）');return b.result;};
+    async test(){this.busy=true;this.testResult='';this._testAbort=new AbortController();let token='';const key=this.testKey;this.testKey='';try{
+      const grant=await this.json(this.info.token_url,{method:'POST',signal:this._testAbort.signal,headers:{Authorization:'Bearer '+key}});token=grant.access_token;this.testResult='认证：成功（短期令牌最多 15 分钟）';
+      const rpc=async(method,params={},version)=>{const r=await fetch(this.info.mcp_url,{method:'POST',signal:this._testAbort.signal,cache:'no-store',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',Accept:'application/json, text/event-stream',...(version?{'MCP-Protocol-Version':version}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});const b=await r.json();if(!r.ok||b.error)throw new Error('MCP '+method+' 失败（'+r.status+'）');return b.result;};
       const init=await rpc('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'inspector-browser-test',version:'1'}});this.testResult+='\n初始化：成功（'+init.protocolVersion+'）';
       const tools=await rpc('tools/list',{},init.protocolVersion);this.testResult+='\n工具发现：'+tools.tools.map(t=>t.name).join(', ');
       const result=await rpc('tools/call',{name:'get_summary',arguments:{}},init.protocolVersion);if(result.isError)throw new Error('状态查询失败：请确认 status:read 及所属用户当前权限');this.testResult+='\n业务查询：成功';
-    }catch(e){this.testResult+='\n'+e.message;}finally{token='';this.busy=false;}},
+    }catch(e){this.testResult+='\n'+e.message;}finally{token='';this._testAbort=null;this.busy=false;}},
     guard(e){if(this.secret){e.preventDefault();e.returnValue='';}}
   },
-  mounted(){this.load();this._guard=e=>this.guard(e);window.addEventListener('beforeunload',this._guard);},
-  beforeUnmount(){window.removeEventListener('beforeunload',this._guard);this.secret='';this.testKey='';}
+  mounted(){this.load();this._statusTimer=window.setInterval(()=>{if(!this.busy)this.loadList();},60000);this._guard=e=>this.guard(e);window.addEventListener('beforeunload',this._guard);},
+  beforeUnmount(){window.clearInterval(this._statusTimer);this._testAbort?.abort();window.removeEventListener('beforeunload',this._guard);this.secret='';this.testKey='';}
 };
